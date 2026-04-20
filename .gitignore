@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/
+torrents/
+config.json
+*.log
+.DS_Store
+torrent-explorer-server

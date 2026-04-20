@@ -1,0 +1,29 @@
+services:
+  torrent-explorer:
+    build:
+      context: .
+    container_name: torrent-explorer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=UTC
+      - PROXY=direct
+      - TOKEN=hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx
+      - RELEASE_GROUP=RabbitCompany
+    volumes:
+      #- ./config.json:/app/config.json
+      - torrent_explorer_torrents:/app/torrents
+      - torrent_explorer_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  torrent_explorer_torrents:
+    driver: local
+  torrent_explorer_data:
+    driver: local

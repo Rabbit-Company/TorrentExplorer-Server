@@ -1,0 +1,27 @@
+{
+	"server": {
+		"host": "0.0.0.0",
+		"port": 3000,
+		"proxy": "direct",
+		"token": "hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx"
+	},
+	"brand": {
+		"releaseGroup": "RabbitCompany"
+	},
+	"database": {
+		"url": "sqlite://data/torrents.db"
+	},
+	"storage": {
+		"driver": "local",
+		"local": {
+			"path": "./torrents"
+		},
+		"s3": {
+			"endpoint": "https://s3.example.com",
+			"region": "auto",
+			"bucket": "torrents",
+			"accessKeyId": "",
+			"secretAccessKey": ""
+		}
+	}
+}
