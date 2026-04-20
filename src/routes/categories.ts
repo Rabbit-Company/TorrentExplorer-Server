@@ -35,13 +35,13 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 			const { page, limit, search } = parseListQuery(url);
 			const offset = (page - 1) * limit;
 
-			const { items, total } = await db.list(category, {
+			const { groups, total } = await db.listGroups(category, {
 				limit,
 				offset,
 				search,
 			});
 			return ctx.json({
-				items,
+				groups,
 				pagination: {
 					page,
 					limit,

@@ -29,6 +29,14 @@ export interface ReleaseListItem {
 	uploaded_at: number;
 }
 
+export interface ReleaseGroupItem {
+	title: string;
+	year: number | null;
+	latest_uploaded_at: number;
+	tags: string[]; // taken from the most recently uploaded release in the group
+	releases: ReleaseListItem[]; // sorted by season, numeric-aware
+}
+
 export class Database {
 	public sql: SQL;
 	private driver: "sqlite" | "postgres" | "mysql";
@@ -153,6 +161,134 @@ export class Database {
 			})),
 			total: Number(countRows[0]?.count ?? 0),
 		};
+	}
+
+	async listGroups(category: Category, options: { limit: number; offset: number; search?: string }): Promise<{ groups: ReleaseGroupItem[]; total: number }> {
+		const search = options.search?.trim();
+		const pattern = search ? `%${search}%` : null;
+
+		// 1. Count distinct (title, year) groups
+		let countRows: Array<{ count: number }>;
+		if (pattern) {
+			countRows = (await this.sql`
+			SELECT COUNT(*) AS count FROM (
+				SELECT 1 FROM releases
+				WHERE category = ${category} AND title LIKE ${pattern}
+				GROUP BY title, year
+			) AS g
+		`) as unknown as Array<{ count: number }>;
+		} else {
+			countRows = (await this.sql`
+			SELECT COUNT(*) AS count FROM (
+				SELECT 1 FROM releases
+				WHERE category = ${category}
+				GROUP BY title, year
+			) AS g
+		`) as unknown as Array<{ count: number }>;
+		}
+		const total = Number(countRows[0]?.count ?? 0);
+		if (total === 0) return { groups: [], total: 0 };
+
+		// 2. Fetch releases for the paginated groups in a single JOIN.
+		// The subquery picks the (title, year) pairs for the requested page; the
+		// outer query pulls in all releases that belong to those groups.
+		type JoinRow = {
+			id: number;
+			category: Category;
+			title: string;
+			year: number | null;
+			season: string | null;
+			torrent_name: string;
+			tags: string;
+			uploaded_at: number;
+			latest_uploaded_at: number;
+		};
+
+		let rows: JoinRow[];
+		if (pattern) {
+			rows = (await this.sql`
+			SELECT
+				r.id, r.category, r.title, r.year, r.season,
+				r.torrent_name, r.tags, r.uploaded_at,
+				g.latest_uploaded_at
+			FROM releases r
+			INNER JOIN (
+				SELECT title, year, MAX(uploaded_at) AS latest_uploaded_at
+				FROM releases
+				WHERE category = ${category} AND title LIKE ${pattern}
+				GROUP BY title, year
+				ORDER BY latest_uploaded_at DESC
+				LIMIT ${options.limit} OFFSET ${options.offset}
+			) AS g
+				ON r.title = g.title
+				AND (r.year = g.year OR (r.year IS NULL AND g.year IS NULL))
+			WHERE r.category = ${category}
+			ORDER BY g.latest_uploaded_at DESC, r.title ASC, r.year ASC, r.season ASC
+		`) as unknown as JoinRow[];
+		} else {
+			rows = (await this.sql`
+			SELECT
+				r.id, r.category, r.title, r.year, r.season,
+				r.torrent_name, r.tags, r.uploaded_at,
+				g.latest_uploaded_at
+			FROM releases r
+			INNER JOIN (
+				SELECT title, year, MAX(uploaded_at) AS latest_uploaded_at
+				FROM releases
+				WHERE category = ${category}
+				GROUP BY title, year
+				ORDER BY latest_uploaded_at DESC
+				LIMIT ${options.limit} OFFSET ${options.offset}
+			) AS g
+				ON r.title = g.title
+				AND (r.year = g.year OR (r.year IS NULL AND g.year IS NULL))
+			WHERE r.category = ${category}
+			ORDER BY g.latest_uploaded_at DESC, r.title ASC, r.year ASC, r.season ASC
+		`) as unknown as JoinRow[];
+		}
+
+		// 3. Collapse rows into groups. Because of the ORDER BY, all rows for the
+		// same (title, year) are contiguous, so first-seen order = page order.
+		const groupMap = new Map<string, ReleaseGroupItem>();
+		const orderedKeys: string[] = [];
+
+		for (const row of rows) {
+			const key = `${row.title}::${row.year ?? ""}`;
+			let group = groupMap.get(key);
+			if (!group) {
+				group = {
+					title: row.title,
+					year: row.year,
+					latest_uploaded_at: Number(row.latest_uploaded_at),
+					tags: [],
+					releases: [],
+				};
+				groupMap.set(key, group);
+				orderedKeys.push(key);
+			}
+			group.releases.push({
+				id: row.id,
+				category: row.category,
+				title: row.title,
+				year: row.year,
+				season: row.season,
+				torrent_name: row.torrent_name,
+				tags: JSON.parse(row.tags),
+				uploaded_at: Number(row.uploaded_at),
+			});
+		}
+
+		// Sort seasons numeric-aware (S2 < S10), and take tags from the most
+		// recently uploaded release in the group.
+		const groups = orderedKeys.map((k) => {
+			const g = groupMap.get(k)!;
+			g.releases.sort((a, b) => (a.season ?? "").localeCompare(b.season ?? "", undefined, { numeric: true, sensitivity: "base" }));
+			const mostRecent = g.releases.reduce((a, b) => (a.uploaded_at >= b.uploaded_at ? a : b));
+			g.tags = mostRecent.tags;
+			return g;
+		});
+
+		return { groups, total };
 	}
 
 	async findById(category: Category, id: number): Promise<Release | null> {
