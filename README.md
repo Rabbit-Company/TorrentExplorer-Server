@@ -407,7 +407,7 @@ services:
       - PROXY=direct
       - TOKEN=replace-with-a-long-random-token
       - RELEASE_GROUP=RabbitCompany
-			- XMR=8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE
+      - XMR=8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE
     volumes:
       #- ./config.json:/app/config.json
       - torrent_explorer_torrents:/app/torrents
