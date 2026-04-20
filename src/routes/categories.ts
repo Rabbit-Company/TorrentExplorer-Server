@@ -5,6 +5,7 @@ import { parseTorrentFilename, sanitizeStorageKey } from "../parser/filename.ts"
 import { Logger } from "../logger.ts";
 import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import type { Config } from "../config.ts";
+import { cache } from "@rabbit-company/web-middleware/cache";
 
 const MAX_TORRENT_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_MEDIAINFO_SIZE = 1 * 1024 * 1024; // 1 MB
@@ -30,7 +31,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 	const { db, storage, config } = services;
 
 	for (const category of ["anime", "movies", "series"] as Category[]) {
-		app.get(`/api/${category}`, async (ctx) => {
+		app.get(`/api/${category}`, cache({ ttl: 30, generateETags: false }), async (ctx) => {
 			const url = new URL(ctx.req.url);
 			const { page, limit, search } = parseListQuery(url);
 			const offset = (page - 1) * limit;
@@ -51,7 +52,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 			});
 		});
 
-		app.get(`/api/${category}/:id`, async (ctx) => {
+		app.get(`/api/${category}/:id`, cache({ ttl: 30, generateETags: false }), async (ctx) => {
 			const id = parseInt(ctx.params.id!, 10);
 			if (!Number.isFinite(id)) {
 				return ctx.json({ error: "Invalid id" }, 400);
