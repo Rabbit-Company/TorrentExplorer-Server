@@ -37,6 +37,15 @@ export interface ReleaseGroupItem {
 	releases: ReleaseListItem[]; // sorted by season, numeric-aware
 }
 
+function parseSearchQuery(raw: string): { title: string; year: number | null } {
+	const trimmed = raw.trim();
+	const parenMatch = trimmed.match(/\((\d{4})\)/);
+	if (!parenMatch) return { title: trimmed, year: null };
+	const year = parseInt(parenMatch[1]!, 10);
+	const title = (trimmed.slice(0, parenMatch.index!) + trimmed.slice(parenMatch.index! + parenMatch[0].length)).replace(/\s+/g, " ").trim();
+	return { title, year };
+}
+
 export class Database {
 	public sql: SQL;
 	private driver: "sqlite" | "postgres" | "mysql";
@@ -164,34 +173,25 @@ export class Database {
 	}
 
 	async listGroups(category: Category, options: { limit: number; offset: number; search?: string }): Promise<{ groups: ReleaseGroupItem[]; total: number }> {
-		const search = options.search?.trim();
-		const pattern = search ? `%${search}%` : null;
+		const parsed = options.search?.trim() ? parseSearchQuery(options.search) : null;
+		const titlePattern = parsed?.title ? `%${parsed.title}%` : null;
+		const year = parsed?.year ?? null;
+
+		const titleFilter = titlePattern ? this.sql`AND title LIKE ${titlePattern}` : this.sql``;
+		const yearFilter = year !== null ? this.sql`AND year = ${year}` : this.sql``;
 
 		// 1. Count distinct (title, year) groups
-		let countRows: Array<{ count: number }>;
-		if (pattern) {
-			countRows = (await this.sql`
-			SELECT COUNT(*) AS count FROM (
-				SELECT 1 FROM releases
-				WHERE category = ${category} AND title LIKE ${pattern}
-				GROUP BY title, year
-			) AS g
-		`) as unknown as Array<{ count: number }>;
-		} else {
-			countRows = (await this.sql`
-			SELECT COUNT(*) AS count FROM (
-				SELECT 1 FROM releases
-				WHERE category = ${category}
-				GROUP BY title, year
-			) AS g
-		`) as unknown as Array<{ count: number }>;
-		}
+		const countRows = (await this.sql`
+		SELECT COUNT(*) AS count FROM (
+			SELECT 1 FROM releases
+			WHERE category = ${category} ${titleFilter} ${yearFilter}
+			GROUP BY title, year
+		) AS g
+	`) as unknown as Array<{ count: number }>;
 		const total = Number(countRows[0]?.count ?? 0);
 		if (total === 0) return { groups: [], total: 0 };
 
 		// 2. Fetch releases for the paginated groups in a single JOIN.
-		// The subquery picks the (title, year) pairs for the requested page; the
-		// outer query pulls in all releases that belong to those groups.
 		type JoinRow = {
 			id: number;
 			category: Category;
@@ -204,51 +204,27 @@ export class Database {
 			latest_uploaded_at: number;
 		};
 
-		let rows: JoinRow[];
-		if (pattern) {
-			rows = (await this.sql`
-			SELECT
-				r.id, r.category, r.title, r.year, r.season,
-				r.torrent_name, r.tags, r.uploaded_at,
-				g.latest_uploaded_at
-			FROM releases r
-			INNER JOIN (
-				SELECT title, year, MAX(uploaded_at) AS latest_uploaded_at
-				FROM releases
-				WHERE category = ${category} AND title LIKE ${pattern}
-				GROUP BY title, year
-				ORDER BY latest_uploaded_at DESC
-				LIMIT ${options.limit} OFFSET ${options.offset}
-			) AS g
-				ON r.title = g.title
-				AND (r.year = g.year OR (r.year IS NULL AND g.year IS NULL))
-			WHERE r.category = ${category}
-			ORDER BY g.latest_uploaded_at DESC, r.title ASC, r.year ASC, r.season ASC
-		`) as unknown as JoinRow[];
-		} else {
-			rows = (await this.sql`
-			SELECT
-				r.id, r.category, r.title, r.year, r.season,
-				r.torrent_name, r.tags, r.uploaded_at,
-				g.latest_uploaded_at
-			FROM releases r
-			INNER JOIN (
-				SELECT title, year, MAX(uploaded_at) AS latest_uploaded_at
-				FROM releases
-				WHERE category = ${category}
-				GROUP BY title, year
-				ORDER BY latest_uploaded_at DESC
-				LIMIT ${options.limit} OFFSET ${options.offset}
-			) AS g
-				ON r.title = g.title
-				AND (r.year = g.year OR (r.year IS NULL AND g.year IS NULL))
-			WHERE r.category = ${category}
-			ORDER BY g.latest_uploaded_at DESC, r.title ASC, r.year ASC, r.season ASC
-		`) as unknown as JoinRow[];
-		}
+		const rows = (await this.sql`
+		SELECT
+			r.id, r.category, r.title, r.year, r.season,
+			r.torrent_name, r.tags, r.uploaded_at,
+			g.latest_uploaded_at
+		FROM releases r
+		INNER JOIN (
+			SELECT title, year, MAX(uploaded_at) AS latest_uploaded_at
+			FROM releases
+			WHERE category = ${category} ${titleFilter} ${yearFilter}
+			GROUP BY title, year
+			ORDER BY latest_uploaded_at DESC
+			LIMIT ${options.limit} OFFSET ${options.offset}
+		) AS g
+			ON r.title = g.title
+			AND (r.year = g.year OR (r.year IS NULL AND g.year IS NULL))
+		WHERE r.category = ${category}
+		ORDER BY g.latest_uploaded_at DESC, r.title ASC, r.year ASC, r.season ASC
+	`) as unknown as JoinRow[];
 
-		// 3. Collapse rows into groups. Because of the ORDER BY, all rows for the
-		// same (title, year) are contiguous, so first-seen order = page order.
+		// 3. Collapse rows into groups.
 		const groupMap = new Map<string, ReleaseGroupItem>();
 		const orderedKeys: string[] = [];
 
