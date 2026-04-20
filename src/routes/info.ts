@@ -13,11 +13,15 @@ export function registerInfoRoutes(app: Web, services: Services): void {
 
 	app.get("/api/info", cache({ ttl: 30, generateETags: false }), async (ctx) => {
 		const stats = await db.stats();
-		return ctx.json({
-			releaseGroup: config.brand.releaseGroup,
-			stats,
-			donation: { xmr: config.donation.xmr },
-		});
+		return ctx.json(
+			{
+				releaseGroup: config.brand.releaseGroup,
+				stats,
+				donation: { xmr: config.donation.xmr },
+			},
+			200,
+			{ "Cache-Control": "public, max-age=30, s-maxage=30" },
+		);
 	});
 
 	app.get("/api/health", (ctx) => ctx.json({ status: "ok" }));

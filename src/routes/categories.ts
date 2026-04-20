@@ -41,39 +41,47 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				offset,
 				search,
 			});
-			return ctx.json({
-				groups,
-				pagination: {
-					page,
-					limit,
-					total,
-					pages: Math.max(1, Math.ceil(total / limit)),
+			return ctx.json(
+				{
+					groups,
+					pagination: {
+						page,
+						limit,
+						total,
+						pages: Math.max(1, Math.ceil(total / limit)),
+					},
 				},
-			});
+				200,
+				{ "Cache-Control": "public, max-age=30, s-maxage=30" },
+			);
 		});
 
 		app.get(`/api/${category}/:id`, cache({ ttl: 30, generateETags: false }), async (ctx) => {
 			const id = parseInt(ctx.params.id!, 10);
 			if (!Number.isFinite(id)) {
-				return ctx.json({ error: "Invalid id" }, 400);
+				return ctx.json({ error: "Invalid id" }, 400, { "Cache-Control": "no-store" });
 			}
 			const release = await db.findById(category, id);
 			if (!release) {
-				return ctx.json({ error: "Not found" }, 404);
+				return ctx.json({ error: "Not found" }, 404, { "Cache-Control": "no-store" });
 			}
 			const group = await db.findGroupReleases(category, release.title, release.year);
-			return ctx.json({
-				id: release.id,
-				category: release.category,
-				title: release.title,
-				year: release.year,
-				season: release.season,
-				torrent_name: release.torrent_name,
-				mediainfo: release.mediainfo,
-				tags: JSON.parse(release.tags) as string[],
-				uploaded_at: Number(release.uploaded_at),
-				group,
-			});
+			return ctx.json(
+				{
+					id: release.id,
+					category: release.category,
+					title: release.title,
+					year: release.year,
+					season: release.season,
+					torrent_name: release.torrent_name,
+					mediainfo: release.mediainfo,
+					tags: JSON.parse(release.tags) as string[],
+					uploaded_at: Number(release.uploaded_at),
+					group,
+				},
+				200,
+				{ "Cache-Control": "public, max-age=30, s-maxage=30" },
+			);
 		});
 
 		app.post(
