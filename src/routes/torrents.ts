@@ -42,6 +42,7 @@ export function registerTorrentRoutes(app: Web, services: Services): void {
 		return new Response(Buffer.from(bytes), {
 			status: 200,
 			headers: {
+				"Access-Control-Allow-Origin": "*",
 				"Content-Type": "application/x-bittorrent",
 				"Content-Disposition": `attachment; filename="${safeName}.torrent"; filename*=UTF-8''${encoded}`,
 				"Content-Length": String(bytes.byteLength),
