@@ -60,6 +60,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 			if (!release) {
 				return ctx.json({ error: "Not found" }, 404);
 			}
+			const group = await db.findGroupReleases(category, release.title, release.year);
 			return ctx.json({
 				id: release.id,
 				category: release.category,
@@ -70,6 +71,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				mediainfo: release.mediainfo,
 				tags: JSON.parse(release.tags) as string[],
 				uploaded_at: Number(release.uploaded_at),
+				group,
 			});
 		});
 

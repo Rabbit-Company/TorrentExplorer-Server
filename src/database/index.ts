@@ -298,6 +298,26 @@ export class Database {
 		return rows[0] ?? null;
 	}
 
+	async findGroupReleases(category: Category, title: string, year: number | null): Promise<Array<{ id: number; season: string | null }>> {
+		type Row = { id: number; season: string | null };
+		let rows: Row[];
+		if (year === null) {
+			rows = (await this.sql`
+			SELECT id, season FROM releases
+			WHERE category = ${category} AND title = ${title} AND year IS NULL
+		`) as unknown as Row[];
+		} else {
+			rows = (await this.sql`
+			SELECT id, season FROM releases
+			WHERE category = ${category} AND title = ${title} AND year = ${year}
+		`) as unknown as Row[];
+		}
+		// Numeric-aware sort (S2 before S10)
+		return rows
+			.map((r) => ({ id: Number(r.id), season: r.season }))
+			.sort((a, b) => (a.season ?? "").localeCompare(b.season ?? "", undefined, { numeric: true, sensitivity: "base" }));
+	}
+
 	async stats(): Promise<Record<Category, number>> {
 		const rows = (await this.sql`
 			SELECT category, COUNT(*) AS count FROM releases GROUP BY category
