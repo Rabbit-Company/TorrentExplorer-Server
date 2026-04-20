@@ -15,6 +15,7 @@ export function registerInfoRoutes(app: Web, services: Services): void {
 		return ctx.json({
 			releaseGroup: config.brand.releaseGroup,
 			stats,
+			donation: { xmr: config.donation.xmr },
 		});
 	});
 

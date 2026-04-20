@@ -25,6 +25,7 @@ At startup, environment variables can override values from the config file:
 - `PORT`
 - `PROXY`
 - `TOKEN`
+- `XMR`
 - `DATABASE_URL`
 - `RELEASE_GROUP`
 - `STORAGE_DRIVER`
@@ -41,6 +42,9 @@ Example:
 	},
 	"brand": {
 		"releaseGroup": "RabbitCompany",
+	},
+	"donation": {
+		"xmr": "8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE",
 	},
 	"database": {
 		"url": "sqlite://data/torrents.db",
@@ -132,6 +136,18 @@ Example:
 ```
 
 If this value is set incorrectly, rate limiting may group all requests under the proxy IP instead of the real client IP.
+
+### Donation options
+
+`donation.xmr` Optional Monero donation address exposed by the API for frontend display.
+
+```json
+{
+	"donation": {
+		"xmr": "8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE"
+	}
+}
+```
 
 ### Database
 
@@ -391,6 +407,7 @@ services:
       - PROXY=direct
       - TOKEN=replace-with-a-long-random-token
       - RELEASE_GROUP=RabbitCompany
+			- XMR=8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE
     volumes:
       #- ./config.json:/app/config.json
       - torrent_explorer_torrents:/app/torrents

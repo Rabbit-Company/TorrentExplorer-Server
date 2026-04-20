@@ -21,6 +21,9 @@ export interface Config {
 	brand: {
 		releaseGroup: string;
 	};
+	donation: {
+		xmr?: string;
+	};
 	database: {
 		url: string;
 	};
@@ -46,6 +49,7 @@ const DEFAULT_CONFIG: Config = {
 		proxy: "direct",
 		token: "hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx",
 	},
+	donation: {},
 	brand: {
 		releaseGroup: "RabbitCompany",
 	},
@@ -102,6 +106,7 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.HOST) config.server.host = process.env.HOST;
 	if (process.env.PROXY) config.server.proxy = isIpExtractionPreset(process.env.PROXY) ? process.env.PROXY : "direct";
 	if (process.env.TOKEN) config.server.token = process.env.TOKEN;
+	if (process.env.XMR) config.donation.xmr = process.env.XMR;
 	if (process.env.DATABASE_URL) config.database.url = process.env.DATABASE_URL;
 	if (process.env.RELEASE_GROUP) config.brand.releaseGroup = process.env.RELEASE_GROUP;
 	if (process.env.STORAGE_DRIVER) config.storage.driver = process.env.STORAGE_DRIVER as StorageDriver;
