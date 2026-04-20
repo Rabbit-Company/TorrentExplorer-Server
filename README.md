@@ -1,8 +1,8 @@
 # TorrentExplorer-Server
 
-Backend API for the torrent explorer.
+Backend API for TorrentExplorer.
 
-Stores torrent files (locally or in any S3-compatible bucket) along with MediaInfo metadata, then serves them back through a small REST API.
+It stores `.torrent` files (either locally or in any S3-compatible bucket) together with MediaInfo metadata, and exposes them through a small REST API.
 
 ## Quick start
 
@@ -13,11 +13,23 @@ cp config.example.json config.json
 bun run start
 ```
 
-Server listens on `http://0.0.0.0:3000` by default.
+By default, the server listens on `http://0.0.0.0:3000`.
 
 ## Configuration
 
-All options live in `config.json`. Environment variables override the file at startup (`PORT`, `HOST`, `PROXY`, `TOKEN`, `DATABASE_URL`, `RELEASE_GROUP`, `STORAGE_DRIVER`).
+All configuration lives in `config.json`.
+
+At startup, environment variables can override values from the config file:
+
+- `HOST`
+- `PORT`
+- `PROXY`
+- `TOKEN`
+- `DATABASE_URL`
+- `RELEASE_GROUP`
+- `STORAGE_DRIVER`
+
+Example:
 
 ```jsonc
 {
@@ -49,9 +61,81 @@ All options live in `config.json`. Environment variables override the file at st
 }
 ```
 
+### Server options
+
+#### `server.host`
+
+Host interface to bind to.
+
+Default:
+
+```json
+"0.0.0.0"
+```
+
+#### `server.port`
+
+Port to listen on.
+
+Default:
+
+```json
+3000
+```
+
+#### `server.token`
+
+Bearer token required for authenticated API endpoints such as uploads.
+
+Clients must send it as:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+#### `server.proxy`
+
+Controls how the server extracts the real client IP address.
+
+This is important for IP-based rate limiting. If the server is behind a reverse proxy or CDN, you must configure this correctly so rate limiting is applied to the actual client IP instead of the proxy IP.
+
+Supported presets:
+
+- `direct`
+- `cloudflare`
+- `aws`
+- `gcp`
+- `azure`
+- `vercel`
+- `nginx`
+- `development`
+
+Use:
+
+- `direct` when the server is exposed directly to the internet and not behind a proxy
+- `cloudflare` when traffic passes through Cloudflare
+- `aws` when deployed behind AWS proxy or load balancer infrastructure
+- `gcp` when deployed behind Google Cloud infrastructure
+- `azure` when deployed behind Azure infrastructure
+- `vercel` when deployed on or behind Vercel
+- `nginx` when using Nginx as a reverse proxy
+- `development` for local development setups where forwarded headers may be inconsistent
+
+Example:
+
+```jsonc
+{
+	"server": {
+		"proxy": "cloudflare",
+	},
+}
+```
+
+If this value is set incorrectly, rate limiting may group all requests under the proxy IP instead of the real client IP.
+
 ### Database
 
-`database.url` uses Bun's built-in SQL driver — one URL swaps the backend:
+`database.url` uses Bun's built-in SQL driver, so switching databases only requires changing the connection URL:
 
 | Database   | URL                                 |
 | ---------- | ----------------------------------- |
@@ -59,18 +143,79 @@ All options live in `config.json`. Environment variables override the file at st
 | PostgreSQL | `postgres://user:pass@host:5432/db` |
 | MySQL      | `mysql://user:pass@host:3306/db`    |
 
-Schema is auto-migrated on startup.
+The schema is migrated automatically on startup.
 
 ### Storage
 
-- **local** — torrent files are written to the configured path with their original names preserved.
-- **s3** — any S3-compatible provider (AWS, Cloudflare R2, Backblaze B2, MinIO, etc).
+#### `storage.driver`
+
+Supported values:
+
+- `local`
+- `s3`
+
+#### Local storage
+
+Torrent files are stored on disk using their original filenames.
+
+Example:
+
+```jsonc
+{
+	"storage": {
+		"driver": "local",
+		"local": {
+			"path": "./torrents",
+		},
+	},
+}
+```
+
+#### S3 storage
+
+Any S3-compatible provider can be used, including:
+
+- AWS S3
+- Cloudflare R2
+- Backblaze B2
+- MinIO
+
+Example:
+
+```jsonc
+{
+	"storage": {
+		"driver": "s3",
+		"s3": {
+			"endpoint": "https://s3.example.com",
+			"region": "auto",
+			"bucket": "torrents",
+			"accessKeyId": "...",
+			"secretAccessKey": "...",
+		},
+	},
+}
+```
 
 ## API reference
 
-No authentication is implemented — the upload endpoints are intended to be fronted by your own auth layer.
+## Authentication
+
+Upload endpoints require bearer token authentication.
+
+Send the configured token in the `Authorization` header:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+Read-only endpoints do not require authentication unless you add your own external access control.
 
 ### `GET /api/info`
+
+Returns basic server branding and release counts by category.
+
+Example response:
 
 ```json
 {
@@ -81,7 +226,11 @@ No authentication is implemented — the upload endpoints are intended to be fro
 
 ### `GET /api/{anime|movies|series}?page=1&limit=24&q=search`
 
-Lists releases for a category. Returns summary rows without the (potentially large) mediainfo text.
+Lists releases for a category.
+
+This endpoint returns summary rows only and does not include the full MediaInfo text.
+
+Example response:
 
 ```json
 {
@@ -101,39 +250,165 @@ Lists releases for a category. Returns summary rows without the (potentially lar
 }
 ```
 
+Query parameters:
+
+| Parameter | Type   | Required | Description                                      |
+| --------- | ------ | -------- | ------------------------------------------------ |
+| `page`    | number | no       | Page number (default: implementation-defined)    |
+| `limit`   | number | no       | Items per page (default: implementation-defined) |
+| `q`       | string | no       | Search query                                     |
+
 ### `GET /api/{anime|movies|series}/:id`
 
-Full detail, including the raw mediainfo text. The frontend parses this itself.
+Returns the full release record for a single item, including the raw MediaInfo text.
+
+The frontend is expected to parse and render the MediaInfo content itself.
 
 ### `POST /api/{anime|movies|series}`
 
-Multipart form upload:
+Creates a new release by uploading a torrent file and its corresponding MediaInfo.
 
-| Field       | Type             | Required | Notes                                                       |
-| ----------- | ---------------- | -------- | ----------------------------------------------------------- |
-| `torrent`   | file             | yes      | `.torrent` file. Original filename is preserved.            |
-| `mediainfo` | file **or** text | yes      | MediaInfo text for the release (first episode for batches). |
+#### Authorization
 
-The filename must follow the format  
-`[ReleaseGroup] Title (Year) - S## [Tag1][Tag2]…` for series/anime or  
-`[ReleaseGroup] Title (Year) [Tag1][Tag2]…` for movies.  
-Title, year, season, and tags are parsed from the filename.
+This endpoint requires bearer token authentication.
+
+Include the token in the `Authorization` header:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+#### Request format
+
+Send the request as `multipart/form-data`.
+
+| Field       | Type             | Required | Notes                                                             |
+| ----------- | ---------------- | -------- | ----------------------------------------------------------------- |
+| `torrent`   | file             | yes      | A `.torrent` file. The original filename is preserved.            |
+| `mediainfo` | file **or** text | yes      | MediaInfo text for the release. For batch uploads, use episode 1. |
+
+#### Filename format
+
+The uploaded torrent filename must follow one of these formats:
+
+- **Anime / Series**  
+  `[ReleaseGroup] Title (Year) - S## [Tag1][Tag2]…`
+
+- **Movies**  
+  `[ReleaseGroup] Title (Year) [Tag1][Tag2]…`
+
+The API parses the following metadata from the filename:
+
+- release group
+- title
+- year
+- season (for anime/series)
+- tags
+
+Example:
 
 ```bash
 curl -X POST http://localhost:3000/api/anime \
+  -H "Authorization: Bearer <your_token>" \
   -F "torrent=@[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1].torrent" \
   -F "mediainfo=@mediainfo.txt"
 ```
 
-Returns `201 Created` with the new release.
+Response:
+
+- `201 Created` on success, with the newly created release in the response body
 
 ### `GET /api/torrent/{anime|movies|series}/:id`
 
-Streams the `.torrent` file back with its original name (ready for the user to download and open in their client).
+Streams the original `.torrent` file back to the client using its original filename.
+
+This is intended for direct browser download or opening in a torrent client.
 
 ## Deployment
 
+### Native binary
+
+Build a single-file executable:
+
 ```bash
-bun run build   # produces a single-file executable
+bun run build
+```
+
+Run it:
+
+```bash
 ./torrent-explorer-server
 ```
+
+### Docker
+
+A multi-stage `Dockerfile` is included.
+
+Build the image:
+
+```bash
+docker build -t torrent-explorer-server .
+```
+
+Run the container:
+
+```bash
+docker run -d \
+  --name torrent-explorer-server \
+  -p 3000:3000 \
+  -e PROXY=direct \
+  -e TOKEN=replace-with-a-long-random-token \
+  -e RELEASE_GROUP=RabbitCompany \
+  -v $(pwd)/torrents:/app/torrents \
+  -v $(pwd)/data:/app/data \
+  torrent-explorer-server
+```
+
+If the container is behind a reverse proxy or CDN, set `PROXY` to the matching preset such as `cloudflare` or `nginx` so client IPs are extracted correctly for rate limiting.
+
+### Docker Compose
+
+A `docker-compose.yml` example is also included.
+
+Start the service:
+
+```bash
+docker compose up -d
+```
+
+Example Compose configuration:
+
+```yaml
+services:
+  torrent-explorer:
+    image: rabbitcompany/torrent-explorer:latest
+    container_name: torrent-explorer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=UTC
+      - PROXY=direct
+      - TOKEN=replace-with-a-long-random-token
+      - RELEASE_GROUP=RabbitCompany
+    volumes:
+      #- ./config.json:/app/config.json
+      - torrent_explorer_torrents:/app/torrents
+      - torrent_explorer_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  torrent_explorer_torrents:
+    driver: local
+  torrent_explorer_data:
+    driver: local
+```
+
+If you uncomment the `config.json` bind mount, values from that file are still overridden by supported environment variables.
+
+When deploying behind Cloudflare, Nginx, or another proxy layer, change `PROXY` from `direct` to the correct preset. Otherwise all traffic may appear to come from the proxy, which breaks per-IP rate limiting.
