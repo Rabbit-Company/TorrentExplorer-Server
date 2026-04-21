@@ -27,6 +27,28 @@ function parseListQuery(url: URL): {
 	return { page, limit, search: search || undefined };
 }
 
+/**
+ * Removes full paths from "Complete name" fields, leaving only the filename.
+ * Example: "Complete name : /path/to/My Video.mkv" -> "Complete name : My Video.mkv"
+ */
+function redactMediainfoPaths(mediainfo: string): string {
+	const lines = mediainfo.split("\n");
+	const redactedLines = lines.map((line) => {
+		// Match "Complete name" followed by optional spaces, colon, spaces, then capture the value
+		const match = line.match(/^Complete name\s*:\s*(.+)$/i);
+		if (!match) return line;
+
+		const fullPath = match[1].trim();
+		// Split on both forward and backward slashes, get last segment
+		const parts = fullPath.split(/[/\\]/);
+		const filename = parts.pop() || fullPath;
+
+		// Reconstruct the line with the same indentation structure
+		return line.replace(/^Complete name\s*:\s*.+$/i, `Complete name                            : ${filename}`);
+	});
+	return redactedLines.join("\n");
+}
+
 export function registerCategoryRoutes(app: Web, services: Services): void {
 	const { db, storage, config } = services;
 
@@ -135,6 +157,8 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				if (!mediainfoText.trim()) {
 					return ctx.json({ error: "MediaInfo is empty" }, 400);
 				}
+
+				mediainfoText = redactMediainfoPaths(mediainfoText);
 
 				// The user formats torrent files nicely -> preserve the exact filename.
 				const rawName = torrent.name;
