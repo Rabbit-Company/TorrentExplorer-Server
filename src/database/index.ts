@@ -16,6 +16,13 @@ export interface Release {
 	mediainfo: string;
 	tags: string; // JSON array
 	uploaded_at: number;
+	info_hash: string | null; // 40-char hex (SHA-1 of info dict)
+	trackers: string | null; // JSON array of announce URLs
+	files: string | null; // JSON array of { path: string[], length: number }
+	seeders: number | null;
+	leechers: number | null;
+	completed: number | null;
+	last_scraped_at: number | null;
 }
 
 export interface ReleaseListItem {
@@ -27,6 +34,10 @@ export interface ReleaseListItem {
 	torrent_name: string;
 	tags: string[];
 	uploaded_at: number;
+	seeders: number | null;
+	leechers: number | null;
+	completed: number | null;
+	last_scraped_at: number | null;
 }
 
 export interface ReleaseGroupItem {
@@ -37,6 +48,21 @@ export interface ReleaseGroupItem {
 	releases: ReleaseListItem[]; // sorted by season, numeric-aware
 }
 
+/** Minimal shape needed by the scraper: what to scrape and where. */
+export interface ScrapeTarget {
+	id: number;
+	category: Category;
+	info_hash: string;
+	trackers: string[];
+}
+
+/** Rows that need info_hash + trackers backfilled from their .torrent file. */
+export interface MissingMetadataRow {
+	id: number;
+	category: Category;
+	torrent_file: string;
+}
+
 function parseSearchQuery(raw: string): { title: string; year: number | null } {
 	const trimmed = raw.trim();
 	const parenMatch = trimmed.match(/\((\d{4})\)/);
@@ -44,6 +70,33 @@ function parseSearchQuery(raw: string): { title: string; year: number | null } {
 	const year = parseInt(parenMatch[1]!, 10);
 	const title = (trimmed.slice(0, parenMatch.index!) + trimmed.slice(parenMatch.index! + parenMatch[0].length)).replace(/\s+/g, " ").trim();
 	return { title, year };
+}
+
+function parseTrackerJson(raw: string | null): string[] {
+	if (!raw) return [];
+	try {
+		const v = JSON.parse(raw);
+		return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
+function toListItem(r: Release): ReleaseListItem {
+	return {
+		id: r.id,
+		category: r.category,
+		title: r.title,
+		year: r.year,
+		season: r.season,
+		torrent_name: r.torrent_name,
+		tags: JSON.parse(r.tags),
+		uploaded_at: Number(r.uploaded_at),
+		seeders: r.seeders === null || r.seeders === undefined ? null : Number(r.seeders),
+		leechers: r.leechers === null || r.leechers === undefined ? null : Number(r.leechers),
+		completed: r.completed === null || r.completed === undefined ? null : Number(r.completed),
+		last_scraped_at: r.last_scraped_at === null || r.last_scraped_at === undefined ? null : Number(r.last_scraped_at),
+	};
 }
 
 export class Database {
@@ -90,12 +143,33 @@ export class Database {
 				torrent_file TEXT NOT NULL,
 				mediainfo TEXT NOT NULL,
 				tags TEXT NOT NULL,
-				uploaded_at BIGINT NOT NULL
+				uploaded_at BIGINT NOT NULL,
+				info_hash VARCHAR(40),
+				trackers TEXT,
+				files TEXT,
+				seeders INTEGER,
+				leechers INTEGER,
+				completed INTEGER,
+				last_scraped_at BIGINT
 			)
 		`);
 
+		const addColumnStatements = [
+			"ALTER TABLE releases ADD COLUMN info_hash VARCHAR(40)",
+			"ALTER TABLE releases ADD COLUMN trackers TEXT",
+			"ALTER TABLE releases ADD COLUMN files TEXT",
+			"ALTER TABLE releases ADD COLUMN seeders INTEGER",
+			"ALTER TABLE releases ADD COLUMN leechers INTEGER",
+			"ALTER TABLE releases ADD COLUMN completed INTEGER",
+			"ALTER TABLE releases ADD COLUMN last_scraped_at BIGINT",
+		];
+		for (const stmt of addColumnStatements) {
+			await this.sql.unsafe(stmt).catch(() => {});
+		}
+
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_category ON releases (category)`).catch(() => {});
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_uploaded_at ON releases (uploaded_at)`).catch(() => {});
+		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_info_hash ON releases (info_hash)`).catch(() => {});
 	}
 
 	async insert(entry: Omit<Release, "id">): Promise<Release> {
@@ -110,6 +184,13 @@ export class Database {
 				mediainfo: entry.mediainfo,
 				tags: entry.tags,
 				uploaded_at: entry.uploaded_at,
+				info_hash: entry.info_hash,
+				trackers: entry.trackers,
+				files: entry.files,
+				seeders: entry.seeders,
+				leechers: entry.leechers,
+				completed: entry.completed,
+				last_scraped_at: entry.last_scraped_at,
 			})}
 			${this.driver !== "mysql" ? this.sql`RETURNING *` : this.sql``}
 		`;
@@ -133,7 +214,7 @@ export class Database {
 		if (search) {
 			const pattern = `%${search}%`;
 			items = (await this.sql`
-				SELECT id, category, title, year, season, torrent_name, tags, uploaded_at
+				SELECT id, category, title, year, season, torrent_name, tags, uploaded_at, seeders, leechers, completed, last_scraped_at
 				FROM releases
 				WHERE category = ${category} AND title LIKE ${pattern}
 				ORDER BY uploaded_at DESC
@@ -145,7 +226,7 @@ export class Database {
 			`) as unknown as Array<{ count: number }>;
 		} else {
 			items = (await this.sql`
-				SELECT id, category, title, year, season, torrent_name, tags, uploaded_at
+				SELECT id, category, title, year, season, torrent_name, tags, uploaded_at, seeders, leechers, completed, last_scraped_at
 				FROM releases
 				WHERE category = ${category}
 				ORDER BY uploaded_at DESC
@@ -158,16 +239,7 @@ export class Database {
 		}
 
 		return {
-			items: items.map((r) => ({
-				id: r.id,
-				category: r.category,
-				title: r.title,
-				year: r.year,
-				season: r.season,
-				torrent_name: r.torrent_name,
-				tags: JSON.parse(r.tags),
-				uploaded_at: Number(r.uploaded_at),
-			})),
+			items: items.map(toListItem),
 			total: Number(countRows[0]?.count ?? 0),
 		};
 	}
@@ -202,12 +274,17 @@ export class Database {
 			tags: string;
 			uploaded_at: number;
 			latest_uploaded_at: number;
+			seeders: number | null;
+			leechers: number | null;
+			completed: number | null;
+			last_scraped_at: number | null;
 		};
 
 		const rows = (await this.sql`
 		SELECT
 			r.id, r.category, r.title, r.year, r.season,
 			r.torrent_name, r.tags, r.uploaded_at,
+			r.seeders, r.leechers, r.completed, r.last_scraped_at,
 			g.latest_uploaded_at
 		FROM releases r
 		INNER JOIN (
@@ -251,6 +328,10 @@ export class Database {
 				torrent_name: row.torrent_name,
 				tags: JSON.parse(row.tags),
 				uploaded_at: Number(row.uploaded_at),
+				seeders: row.seeders === null || row.seeders === undefined ? null : Number(row.seeders),
+				leechers: row.leechers === null || row.leechers === undefined ? null : Number(row.leechers),
+				completed: row.completed === null || row.completed === undefined ? null : Number(row.completed),
+				last_scraped_at: row.last_scraped_at === null || row.last_scraped_at === undefined ? null : Number(row.last_scraped_at),
 			});
 		}
 
@@ -304,5 +385,67 @@ export class Database {
 			result[row.category] = Number(row.count);
 		}
 		return result;
+	}
+
+	/**
+	 * Every release that has both info_hash and at least one tracker.
+	 * Parsed tracker JSON is returned as string[] for direct use.
+	 */
+	async listScrapeTargets(): Promise<ScrapeTarget[]> {
+		type Row = { id: number; category: Category; info_hash: string; trackers: string | null };
+		const rows = (await this.sql`
+			SELECT id, category, info_hash, trackers
+			FROM releases
+			WHERE info_hash IS NOT NULL AND trackers IS NOT NULL
+		`) as unknown as Row[];
+
+		return rows
+			.map((r) => ({
+				id: Number(r.id),
+				category: r.category,
+				info_hash: r.info_hash,
+				trackers: parseTrackerJson(r.trackers),
+			}))
+			.filter((r) => r.trackers.length > 0);
+	}
+
+	/** Releases missing info_hash, trackers, or files = candidates for one-time backfill. */
+	async listMissingMetadata(): Promise<MissingMetadataRow[]> {
+		type Row = { id: number; category: Category; torrent_file: string };
+		const rows = (await this.sql`
+			SELECT id, category, torrent_file FROM releases
+			WHERE info_hash IS NULL OR trackers IS NULL OR files IS NULL
+		`) as unknown as Row[];
+		return rows.map((r) => ({ id: Number(r.id), category: r.category, torrent_file: r.torrent_file }));
+	}
+
+	/** Fill in info_hash + trackers + files for a single release (backfill path). */
+	async setTorrentMetadata(id: number, info_hash: string, trackers: string[], files: Array<{ path: string[]; length: number }>): Promise<void> {
+		const trackersJson = JSON.stringify(trackers);
+		const filesJson = JSON.stringify(files);
+		await this.sql`
+			UPDATE releases
+			SET info_hash = ${info_hash},
+			    trackers = ${trackersJson},
+			    files = ${filesJson}
+			WHERE id = ${id}
+		`;
+	}
+
+	/**
+	 * Apply scrape results for many torrents in one logical batch.
+	 */
+	async updateScrapeStatsBulk(updates: Array<{ info_hash: string; seeders: number; leechers: number; completed: number }>, scrapedAt: number): Promise<void> {
+		if (updates.length === 0) return;
+		for (const u of updates) {
+			await this.sql`
+				UPDATE releases
+				SET seeders = ${u.seeders},
+				    leechers = ${u.leechers},
+				    completed = ${u.completed},
+				    last_scraped_at = ${scrapedAt}
+				WHERE info_hash = ${u.info_hash}
+			`;
+		}
 	}
 }

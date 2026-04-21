@@ -23,5 +23,10 @@
 			"accessKeyId": "",
 			"secretAccessKey": ""
 		}
+	},
+	"scraper": {
+		"enabled": true,
+		"intervalMinutes": 30,
+		"udpTimeoutMs": 5000
 	}
 }

@@ -7,11 +7,38 @@ import { S3Storage } from "./storage/s3.ts";
 import { registerInfoRoutes } from "./routes/info.ts";
 import { registerCategoryRoutes } from "./routes/categories.ts";
 import { registerTorrentRoutes } from "./routes/torrents.ts";
+import { parseTorrent } from "./bencode.ts";
+import { Scraper } from "./scraper/index.ts";
 import { cors } from "@rabbit-company/web-middleware/cors";
 import { logger } from "@rabbit-company/web-middleware/logger";
 import { Logger } from "./logger.ts";
 import { Algorithm, rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 import { ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
+
+/**
+ * One-shot backfill: for any release whose info_hash or trackers are still
+ * NULL, read the .torrent file once and populate them.
+ */
+async function backfillTorrentMetadata(db: Database, storage: Storage): Promise<void> {
+	const missing = await db.listMissingMetadata();
+	if (missing.length === 0) return;
+
+	Logger.info(`Backfilling info_hash + trackers for ${missing.length} releases...`);
+	let ok = 0;
+	let failed = 0;
+	for (const row of missing) {
+		try {
+			const bytes = await storage.read(row.torrent_file);
+			const meta = await parseTorrent(bytes);
+			await db.setTorrentMetadata(row.id, meta.infoHashHex, meta.announceList, meta.files);
+			ok++;
+		} catch (err: any) {
+			failed++;
+			Logger.warn(`Backfill failed for ${row.category}/${row.id} (${row.torrent_file}): ${err.message ?? err}`);
+		}
+	}
+	Logger.info(`Backfill complete: ${ok} ok, ${failed} failed`);
+}
 
 async function main() {
 	const configPath = process.env.CONFIG_PATH ?? "./config.json";
@@ -79,6 +106,33 @@ async function main() {
 
 	Logger.info(`Listening on http://${config.server.host}:${config.server.port}`);
 	Logger.info(`   Brand: ${config.brand.releaseGroup}`);
+
+	let scraper: Scraper | null = null;
+	if (config.scraper.enabled) {
+		void (async () => {
+			try {
+				await backfillTorrentMetadata(db, storage);
+			} catch (err: any) {
+				Logger.error("Backfill error:", err);
+			}
+
+			scraper = new Scraper(db, {
+				intervalMs: config.scraper.intervalMinutes * 60_000,
+				udpTimeoutMs: config.scraper.udpTimeoutMs,
+			});
+			scraper.start();
+		})();
+	} else {
+		Logger.info("Scraper: disabled by config");
+	}
+
+	const shutdown = () => {
+		Logger.info("Shutting down...");
+		scraper?.stop();
+		process.exit(0);
+	};
+	process.on("SIGTERM", shutdown);
+	process.on("SIGINT", shutdown);
 }
 
 main().catch((err) => {

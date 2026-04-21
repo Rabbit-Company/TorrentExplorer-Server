@@ -2,6 +2,7 @@ import type { Web } from "@rabbit-company/web";
 import type { Database, Category } from "../database/index.ts";
 import type { Storage } from "../storage/types.ts";
 import { parseTorrentFilename, sanitizeStorageKey } from "../parser/filename.ts";
+import { parseTorrent } from "../bencode.ts";
 import { Logger } from "../logger.ts";
 import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import type { Config } from "../config.ts";
@@ -88,6 +89,20 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				return ctx.json({ error: "Not found" }, 404, { "Cache-Control": "no-store" });
 			}
 			const group = await db.findGroupReleases(category, release.title, release.year);
+
+			let files: Array<{ path: string[]; length: number }> = [];
+			if (release.files) {
+				try {
+					const parsed = JSON.parse(release.files);
+					if (Array.isArray(parsed)) {
+						files = parsed.filter(
+							(f): f is { path: string[]; length: number } =>
+								f && Array.isArray(f.path) && f.path.every((p: unknown) => typeof p === "string") && typeof f.length === "number",
+						);
+					}
+				} catch {}
+			}
+
 			return ctx.json(
 				{
 					id: release.id,
@@ -99,6 +114,11 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 					mediainfo: release.mediainfo,
 					tags: JSON.parse(release.tags) as string[],
 					uploaded_at: Number(release.uploaded_at),
+					seeders: release.seeders === null || release.seeders === undefined ? null : Number(release.seeders),
+					leechers: release.leechers === null || release.leechers === undefined ? null : Number(release.leechers),
+					completed: release.completed === null || release.completed === undefined ? null : Number(release.completed),
+					last_scraped_at: release.last_scraped_at === null || release.last_scraped_at === undefined ? null : Number(release.last_scraped_at),
+					files,
 					group,
 				},
 				200,
@@ -163,9 +183,9 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				// The user formats torrent files nicely -> preserve the exact filename.
 				const rawName = torrent.name;
 				const displayName = rawName.replace(/\.torrent$/i, "");
-				const parsed = parseTorrentFilename(rawName);
+				const parsedName = parseTorrentFilename(rawName);
 
-				if (!parsed.title) {
+				if (!parsedName.title) {
 					return ctx.json(
 						{
 							error: "Could not parse torrent filename. Expected format like '[Group] Title (Year) - S## [Tags]'",
@@ -175,6 +195,19 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				}
 
 				const bytes = new Uint8Array(await torrent.arrayBuffer());
+
+				let infoHash: string | null = null;
+				let trackers: string[] = [];
+				let files: Array<{ path: string[]; length: number }> = [];
+				try {
+					const meta = await parseTorrent(bytes);
+					infoHash = meta.infoHashHex;
+					trackers = meta.announceList;
+					files = meta.files;
+				} catch (err: any) {
+					Logger.warn(`Could not parse torrent metadata for ${displayName}: ${err.message ?? err}`);
+				}
+
 				const storageKey = `${category}/${sanitizeStorageKey(displayName)}.torrent`;
 
 				try {
@@ -189,14 +222,21 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				try {
 					created = await db.insert({
 						category,
-						title: parsed.title,
-						year: parsed.year,
-						season: parsed.season,
+						title: parsedName.title,
+						year: parsedName.year,
+						season: parsedName.season,
 						torrent_name: displayName,
 						torrent_file: storageKey,
 						mediainfo: mediainfoText,
-						tags: JSON.stringify(parsed.tags),
+						tags: JSON.stringify(parsedName.tags),
 						uploaded_at: now,
+						info_hash: infoHash,
+						trackers: trackers.length > 0 ? JSON.stringify(trackers) : null,
+						files: files.length > 0 ? JSON.stringify(files) : null,
+						seeders: null,
+						leechers: null,
+						completed: null,
+						last_scraped_at: null,
 					});
 				} catch (err: any) {
 					// Roll back the stored file

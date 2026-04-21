@@ -40,6 +40,11 @@ export interface Config {
 			secretAccessKey: string;
 		};
 	};
+	scraper: {
+		enabled: boolean;
+		intervalMinutes: number;
+		udpTimeoutMs: number;
+	};
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -52,6 +57,11 @@ const DEFAULT_CONFIG: Config = {
 	donation: {},
 	brand: {
 		releaseGroup: "RabbitCompany",
+	},
+	scraper: {
+		enabled: true,
+		intervalMinutes: 30,
+		udpTimeoutMs: 5000,
 	},
 	database: {
 		url: "sqlite://data/torrents.db",
@@ -110,6 +120,16 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.DATABASE_URL) config.database.url = process.env.DATABASE_URL;
 	if (process.env.RELEASE_GROUP) config.brand.releaseGroup = process.env.RELEASE_GROUP;
 	if (process.env.STORAGE_DRIVER) config.storage.driver = process.env.STORAGE_DRIVER as StorageDriver;
+
+	if (process.env.SCRAPER_ENABLED) config.scraper.enabled = process.env.SCRAPER_ENABLED === "true";
+	if (process.env.SCRAPER_INTERVAL_MINUTES) {
+		const n = parseInt(process.env.SCRAPER_INTERVAL_MINUTES, 10);
+		if (Number.isFinite(n) && n > 0) config.scraper.intervalMinutes = n;
+	}
+	if (process.env.SCRAPER_UDP_TIMEOUT_MS) {
+		const n = parseInt(process.env.SCRAPER_UDP_TIMEOUT_MS, 10);
+		if (Number.isFinite(n) && n > 0) config.scraper.udpTimeoutMs = n;
+	}
 
 	return config;
 }

@@ -29,6 +29,9 @@ At startup, environment variables can override values from the config file:
 - `DATABASE_URL`
 - `RELEASE_GROUP`
 - `STORAGE_DRIVER`
+- `SCRAPER_ENABLED`
+- `SCRAPER_INTERVAL_MINUTES`
+- `SCRAPER_UDP_TIMEOUT_MS`
 
 Example:
 
@@ -45,6 +48,11 @@ Example:
 	},
 	"donation": {
 		"xmr": "8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE",
+	},
+	"scraper": {
+		"enabled": true,
+		"intervalMinutes": 30,
+		"udpTimeoutMs": 5000,
 	},
 	"database": {
 		"url": "sqlite://data/torrents.db",
@@ -146,6 +154,58 @@ If this value is set incorrectly, rate limiting may group all requests under the
 	"donation": {
 		"xmr": "8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE"
 	}
+}
+```
+
+### Scraper
+
+The scraper periodically contacts the trackers announced in each stored `.torrent` and updates seeder, leecher, and completed counts, plus the `last_scraped_at` timestamp returned by `GET /api/{category}/:id`.
+
+#### `scraper.enabled`
+
+Whether the background scraper runs.
+
+Set to `false` if you do not want the server to make outbound tracker requests, for example in an offline or mirror-only deployment.
+
+Default:
+
+```json
+true
+```
+
+#### `scraper.intervalMinutes`
+
+How often, in minutes, to scrape tracker stats for every release.
+
+Lower values give fresher numbers at the cost of more outbound traffic and more load on the trackers. Most public trackers dislike very aggressive scraping, so keep this conservative.
+
+Default:
+
+```json
+30
+```
+
+#### `scraper.udpTimeoutMs`
+
+Per-request timeout, in milliseconds, for UDP tracker scrapes.
+
+If a UDP tracker does not answer within this window, it is considered unreachable for the current cycle and the scraper moves on to the next one.
+
+Default:
+
+```json
+5000
+```
+
+Example:
+
+```jsonc
+{
+	"scraper": {
+		"enabled": true,
+		"intervalMinutes": 30,
+		"udpTimeoutMs": 5000,
+	},
 }
 ```
 
@@ -308,10 +368,10 @@ Send the request as `multipart/form-data`.
 The uploaded torrent filename must follow one of these formats:
 
 - **Anime / Series**  
-  `[ReleaseGroup] Title (Year) - S## [Tag1][Tag2]…`
+  `[ReleaseGroup] Title (Year) - S## [Tag1][Tag2]...`
 
 - **Movies**  
-  `[ReleaseGroup] Title (Year) [Tag1][Tag2]…`
+  `[ReleaseGroup] Title (Year) [Tag1][Tag2]...`
 
 The API parses the following metadata from the filename:
 
