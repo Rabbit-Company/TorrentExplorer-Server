@@ -431,7 +431,7 @@ export class Database {
 			UPDATE releases
 			SET info_hash = ${info_hash},
 			    trackers = ${trackersJson},
-			    files = ${filesJson}
+			    files = ${filesJson},
           magnet = ${magnet}
 			WHERE id = ${id}
 		`;
