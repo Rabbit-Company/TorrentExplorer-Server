@@ -19,6 +19,7 @@ export interface Release {
 	info_hash: string | null; // 40-char hex (SHA-1 of info dict)
 	trackers: string | null; // JSON array of announce URLs
 	files: string | null; // JSON array of { path: string[], length: number }
+	magnet: string | null; // full magnet:?xt=urn:btih:... URI
 	seeders: number | null;
 	leechers: number | null;
 	completed: number | null;
@@ -147,6 +148,7 @@ export class Database {
 				info_hash VARCHAR(40),
 				trackers TEXT,
 				files TEXT,
+				magnet TEXT,
 				seeders INTEGER,
 				leechers INTEGER,
 				completed INTEGER,
@@ -158,6 +160,7 @@ export class Database {
 			"ALTER TABLE releases ADD COLUMN info_hash VARCHAR(40)",
 			"ALTER TABLE releases ADD COLUMN trackers TEXT",
 			"ALTER TABLE releases ADD COLUMN files TEXT",
+			"ALTER TABLE releases ADD COLUMN magnet TEXT",
 			"ALTER TABLE releases ADD COLUMN seeders INTEGER",
 			"ALTER TABLE releases ADD COLUMN leechers INTEGER",
 			"ALTER TABLE releases ADD COLUMN completed INTEGER",
@@ -187,6 +190,7 @@ export class Database {
 				info_hash: entry.info_hash,
 				trackers: entry.trackers,
 				files: entry.files,
+				magnet: entry.magnet,
 				seeders: entry.seeders,
 				leechers: entry.leechers,
 				completed: entry.completed,
@@ -409,18 +413,18 @@ export class Database {
 			.filter((r) => r.trackers.length > 0);
 	}
 
-	/** Releases missing info_hash, trackers, or files = candidates for one-time backfill. */
+	/** Releases missing info_hash, trackers, files or magnets = candidates for one-time backfill. */
 	async listMissingMetadata(): Promise<MissingMetadataRow[]> {
 		type Row = { id: number; category: Category; torrent_file: string };
 		const rows = (await this.sql`
 			SELECT id, category, torrent_file FROM releases
-			WHERE info_hash IS NULL OR trackers IS NULL OR files IS NULL
+			WHERE info_hash IS NULL OR trackers IS NULL OR files IS NULL OR magnet IS NULL
 		`) as unknown as Row[];
 		return rows.map((r) => ({ id: Number(r.id), category: r.category, torrent_file: r.torrent_file }));
 	}
 
-	/** Fill in info_hash + trackers + files for a single release (backfill path). */
-	async setTorrentMetadata(id: number, info_hash: string, trackers: string[], files: Array<{ path: string[]; length: number }>): Promise<void> {
+	/** Fill in info_hash + trackers + files + magnet for a single release (backfill path). */
+	async setTorrentMetadata(id: number, info_hash: string, trackers: string[], files: Array<{ path: string[]; length: number }>, magnet: string): Promise<void> {
 		const trackersJson = JSON.stringify(trackers);
 		const filesJson = JSON.stringify(files);
 		await this.sql`
@@ -428,6 +432,7 @@ export class Database {
 			SET info_hash = ${info_hash},
 			    trackers = ${trackersJson},
 			    files = ${filesJson}
+          magnet = ${magnet}
 			WHERE id = ${id}
 		`;
 	}

@@ -7,7 +7,7 @@ import { S3Storage } from "./storage/s3.ts";
 import { registerInfoRoutes } from "./routes/info.ts";
 import { registerCategoryRoutes } from "./routes/categories.ts";
 import { registerTorrentRoutes } from "./routes/torrents.ts";
-import { parseTorrent } from "./bencode.ts";
+import { buildMagnetLink, parseTorrent } from "./bencode.ts";
 import { Scraper } from "./scraper/index.ts";
 import { cors } from "@rabbit-company/web-middleware/cors";
 import { logger } from "@rabbit-company/web-middleware/logger";
@@ -23,14 +23,15 @@ async function backfillTorrentMetadata(db: Database, storage: Storage): Promise<
 	const missing = await db.listMissingMetadata();
 	if (missing.length === 0) return;
 
-	Logger.info(`Backfilling info_hash + trackers for ${missing.length} releases...`);
+	Logger.info(`Backfilling info_hash + trackers + magnet for ${missing.length} releases...`);
 	let ok = 0;
 	let failed = 0;
 	for (const row of missing) {
 		try {
 			const bytes = await storage.read(row.torrent_file);
 			const meta = await parseTorrent(bytes);
-			await db.setTorrentMetadata(row.id, meta.infoHashHex, meta.announceList, meta.files);
+			const magnet = buildMagnetLink(meta);
+			await db.setTorrentMetadata(row.id, meta.infoHashHex, meta.announceList, meta.files, magnet);
 			ok++;
 		} catch (err: any) {
 			failed++;

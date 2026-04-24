@@ -2,7 +2,7 @@ import type { Web } from "@rabbit-company/web";
 import type { Database, Category } from "../database/index.ts";
 import type { Storage } from "../storage/types.ts";
 import { parseTorrentFilename, sanitizeStorageKey } from "../parser/filename.ts";
-import { parseTorrent } from "../bencode.ts";
+import { buildMagnetLink, parseTorrent } from "../bencode.ts";
 import { Logger } from "../logger.ts";
 import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import type { Config } from "../config.ts";
@@ -114,6 +114,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 					mediainfo: release.mediainfo,
 					tags: JSON.parse(release.tags) as string[],
 					uploaded_at: Number(release.uploaded_at),
+					magnet: release.magnet,
 					seeders: release.seeders === null || release.seeders === undefined ? null : Number(release.seeders),
 					leechers: release.leechers === null || release.leechers === undefined ? null : Number(release.leechers),
 					completed: release.completed === null || release.completed === undefined ? null : Number(release.completed),
@@ -199,11 +200,13 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				let infoHash: string | null = null;
 				let trackers: string[] = [];
 				let files: Array<{ path: string[]; length: number }> = [];
+				let magnet: string | null = null;
 				try {
 					const meta = await parseTorrent(bytes);
 					infoHash = meta.infoHashHex;
 					trackers = meta.announceList;
 					files = meta.files;
+					magnet = buildMagnetLink(meta);
 				} catch (err: any) {
 					Logger.warn(`Could not parse torrent metadata for ${displayName}: ${err.message ?? err}`);
 				}
@@ -233,6 +236,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						info_hash: infoHash,
 						trackers: trackers.length > 0 ? JSON.stringify(trackers) : null,
 						files: files.length > 0 ? JSON.stringify(files) : null,
+						magnet,
 						seeders: null,
 						leechers: null,
 						completed: null,
