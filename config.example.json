@@ -5,6 +5,9 @@
 		"proxy": "direct",
 		"token": "hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx"
 	},
+	"frontend": {
+		"url": "https://torrents.example.com"
+	},
 	"brand": {
 		"releaseGroup": "RabbitCompany"
 	},

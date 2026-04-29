@@ -11,6 +11,7 @@ services:
       - TOKEN=hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx
       - RELEASE_GROUP=RabbitCompany
       - XMR=8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE
+      - FRONTEND_URL=https://torrents.example.com
     volumes:
       #- ./config.json:/app/config.json
       - torrent_explorer_torrents:/app/torrents

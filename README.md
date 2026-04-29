@@ -26,6 +26,7 @@ At startup, environment variables can override values from the config file:
 - `PROXY`
 - `TOKEN`
 - `XMR`
+- `FRONTEND_URL`
 - `DATABASE_URL`
 - `RELEASE_GROUP`
 - `STORAGE_DRIVER`
@@ -42,6 +43,9 @@ Example:
 		"port": 3000,
 		"proxy": "direct",
 		"token": "hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx",
+	},
+	"frontend": {
+		"url": "https://torrents.example.com",
 	},
 	"brand": {
 		"releaseGroup": "RabbitCompany",
@@ -156,6 +160,26 @@ If this value is set incorrectly, rate limiting may group all requests under the
 	}
 }
 ```
+
+### Frontend URL
+
+`frontend.url` Public URL of the user-facing frontend (the TorrentExplorer web UI).
+
+When set, this URL is used in the Torznab/RSS feed for `<guid>`, `<link>`, `<comments>`, and the channel `<link>`, so RSS readers and Prowlarr's "Open page" links land on the public site rather than on the backend API. The `.torrent` `<enclosure>` URL still points at the backend, since the frontend doesn't serve the binary itself.
+
+Leave empty to fall back to the backend URL (useful for local development).
+
+Example:
+
+```jsonc
+{
+	"frontend": {
+		"url": "https://torrents.example.com",
+	},
+}
+```
+
+If you change this value after items have been indexed by Prowlarr/Sonarr/Radarr, those tools may treat existing releases as new, since they deduplicate by `<guid>`.
 
 ### Scraper
 
@@ -399,6 +423,80 @@ Response:
 Streams the original `.torrent` file back to the client using its original filename.
 
 This is intended for direct browser download or opening in a torrent client.
+
+### Torznab / RSS endpoints
+
+The server exposes a [Torznab](https://torznab.github.io/spec-1.3-draft/torznab/Specification-v1.3.html)-compatible feed at `/api/torznab` and a plain RSS alias at `/api/rss`. Both emit the same XML format and can be consumed by:
+
+- **Prowlarr** as a Generic Torznab indexer (point it at `/api/torznab`)
+- **Sonarr / Radarr** indirectly, via Prowlarr
+- Any standard RSS reader (use `/api/rss` for simplicity)
+
+#### `GET /api/torznab?t=caps`
+
+Returns the indexer's capabilities (search modes, supported categories) as XML. Prowlarr calls this when adding the indexer to discover what searches are available.
+
+#### `GET /api/torznab?t=search`
+
+Generic search across all categories. This is also the default when `t` is omitted.
+
+Query parameters:
+
+| Parameter | Type   | Required | Description                                                                                |
+| --------- | ------ | -------- | ------------------------------------------------------------------------------------------ |
+| `q`       | string | no       | Free-text search query (matches against the torrent title)                                 |
+| `cat`     | string | no       | Comma-separated newznab category IDs (e.g. `2000,5070`). Unknown IDs are silently ignored. |
+| `offset`  | number | no       | Number of items to skip (default `0`)                                                      |
+| `limit`   | number | no       | Max items to return (default `50`, max `100`)                                              |
+
+Supported `cat` values:
+
+| ID   | Name     | Internal category    |
+| ---- | -------- | -------------------- |
+| 2000 | Movies   | `movies`             |
+| 5000 | TV       | `series` and `anime` |
+| 5070 | TV/Anime | `anime`              |
+
+#### `GET /api/torznab?t=tvsearch`
+
+Same as `search` but constrained to TV-style content (`series` + `anime`). If `cat` is provided, it is intersected with the allowed set.
+
+#### `GET /api/torznab?t=movie`
+
+Same as `search` but constrained to `movies`.
+
+#### `GET /api/rss`
+
+Convenience alias for `GET /api/torznab?t=search`. Useful for plain RSS readers that don't need Torznab capabilities.
+
+#### Item format
+
+Each `<item>` includes:
+
+- `<title>` - original torrent name
+- `<guid>`, `<link>`, `<comments>` - public detail page URL (uses `frontend.url` when configured, otherwise the backend URL)
+- `<pubDate>` - RFC-822 upload time
+- `<enclosure>` - direct `.torrent` download URL served from the backend. A second `<enclosure>` with the magnet URI is added when available.
+- `<torznab:attr>` for: `category`, `size`, `files`, `year`, `poster`, `team`, `seeders`, `leechers`, `peers`, `grabs`, `infohash`, `magneturl`, `downloadvolumefactor` (always `0` - releases are freeleech), `uploadvolumefactor` (always `1`), and `tag` (`freeleech`, `internal`)
+- For movies: `imdbtitle`, `imdbyear`
+- For series/anime: `tvtitle`, `season`, and `episode` when the torrent name contains an `S##E##` marker
+
+#### Examples
+
+- All categories: `GET /api/rss`
+- Anime only: `GET /api/torznab?t=search&cat=5070`
+- Search by title: `GET /api/torznab?t=search&q=tsugumomo`
+- TV search with pagination: `GET /api/torznab?t=tvsearch&offset=50&limit=50`
+
+#### Adding to Prowlarr
+
+In Prowlarr, add a new **Generic Torznab** indexer with:
+
+- **URL**: `https://your-backend.example.com/api/torznab`
+- **API Key**: leave blank (no auth required)
+- **Categories**: tick Movies (2000), TV (5000), TV/Anime (5070)
+
+Prowlarr hits `?t=caps` to validate the indexer when you click **Test**, then begins polling `?t=search` on its normal schedule.
 
 ## Deployment
 

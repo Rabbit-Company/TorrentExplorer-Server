@@ -18,6 +18,9 @@ export interface Config {
 		proxy: IpExtractionPreset;
 		token: string;
 	};
+	frontend: {
+		url: string;
+	};
 	brand: {
 		releaseGroup: string;
 	};
@@ -53,6 +56,9 @@ const DEFAULT_CONFIG: Config = {
 		port: 3000,
 		proxy: "direct",
 		token: "hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx",
+	},
+	frontend: {
+		url: "",
 	},
 	donation: {},
 	brand: {
@@ -117,6 +123,7 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.PROXY) config.server.proxy = isIpExtractionPreset(process.env.PROXY) ? process.env.PROXY : "direct";
 	if (process.env.TOKEN) config.server.token = process.env.TOKEN;
 	if (process.env.XMR) config.donation.xmr = process.env.XMR;
+	if (process.env.FRONTEND_URL) config.frontend.url = process.env.FRONTEND_URL;
 	if (process.env.DATABASE_URL) config.database.url = process.env.DATABASE_URL;
 	if (process.env.RELEASE_GROUP) config.brand.releaseGroup = process.env.RELEASE_GROUP;
 	if (process.env.STORAGE_DRIVER) config.storage.driver = process.env.STORAGE_DRIVER as StorageDriver;

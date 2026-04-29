@@ -248,6 +248,39 @@ export class Database {
 		};
 	}
 
+	async listLatestForFeed(options: { limit: number; offset?: number; categories?: Category[]; search?: string }): Promise<{ items: Release[]; total: number }> {
+		const limit = Math.max(1, Math.min(500, options.limit));
+		const offset = Math.max(0, options.offset ?? 0);
+		const search = options.search?.trim();
+		const pattern = search ? `%${search}%` : null;
+		const cats = options.categories;
+
+		let categoryFilter;
+		if (!cats || cats.length === 0 || cats.length >= 3) {
+			categoryFilter = this.sql``;
+		} else if (cats.length === 1) {
+			categoryFilter = this.sql`AND category = ${cats[0]}`;
+		} else {
+			categoryFilter = this.sql`AND (category = ${cats[0]} OR category = ${cats[1]})`;
+		}
+
+		const searchFilter = pattern ? this.sql`AND title LIKE ${pattern}` : this.sql``;
+
+		const items = (await this.sql`
+			SELECT * FROM releases
+			WHERE 1=1 ${categoryFilter} ${searchFilter}
+			ORDER BY uploaded_at DESC
+			LIMIT ${limit} OFFSET ${offset}
+		`) as unknown as Release[];
+
+		const countRows = (await this.sql`
+			SELECT COUNT(*) AS count FROM releases
+			WHERE 1=1 ${categoryFilter} ${searchFilter}
+		`) as unknown as Array<{ count: number }>;
+
+		return { items, total: Number(countRows[0]?.count ?? 0) };
+	}
+
 	async listGroups(category: Category, options: { limit: number; offset: number; search?: string }): Promise<{ groups: ReleaseGroupItem[]; total: number }> {
 		const parsed = options.search?.trim() ? parseSearchQuery(options.search) : null;
 		const titlePattern = parsed?.title ? `%${parsed.title}%` : null;
