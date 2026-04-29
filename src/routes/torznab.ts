@@ -179,12 +179,12 @@ function buildItem(release: Release, backendUrl: string, frontendUrl: string, re
 	attrs.push(`<torznab:attr name="tag" value="internal"/>`);
 
 	if (category === "movies") {
-		attrs.push(`<torznab:attr name="imdbtitle" value="${release.title}"/>`);
+		attrs.push(`<torznab:attr name="imdbtitle" value="${escapeXml(release.title)}"/>`);
 		if (release.year !== null) attrs.push(`<torznab:attr name="imdbyear" value="${release.year}"/>`);
 	}
 
 	if (["series", "anime"].includes(category)) {
-		attrs.push(`<torznab:attr name="tvtitle" value="${release.title}"/>`);
+		attrs.push(`<torznab:attr name="tvtitle" value="${escapeXml(release.title)}"/>`);
 		if (seasonNum !== null) attrs.push(`<torznab:attr name="season" value="${seasonNum}"/>`);
 		if (episodeNum !== null) attrs.push(`<torznab:attr name="episode" value="${episodeNum}"/>`);
 	}
