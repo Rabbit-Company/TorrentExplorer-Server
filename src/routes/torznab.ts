@@ -19,19 +19,29 @@ const CATEGORY_LABEL: Record<Category, string> = {
 	anime: "TV/Anime",
 };
 
+const FRIENDLY_NAMES = new Set<Category>(["anime", "movies", "series"]);
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 
 // Map newznab category IDs (and ranges) to our internal category names.
 function torznabCatsToInternal(catParam: string | null): Category[] {
 	if (!catParam) return [];
-	const ids = catParam
-		.split(",")
-		.map((s) => parseInt(s.trim(), 10))
-		.filter((n) => Number.isFinite(n));
-
 	const cats = new Set<Category>();
-	for (const id of ids) {
+
+	for (const raw of catParam.split(",")) {
+		const token = raw.trim().toLowerCase();
+		if (!token) continue;
+
+		// Friendly names
+		if (FRIENDLY_NAMES.has(token as Category)) {
+			cats.add(token as Category);
+			continue;
+		}
+
+		// Numeric Torznab IDs
+		const id = parseInt(token, 10);
+		if (!Number.isFinite(id)) continue;
+
 		if (id === 5070) cats.add("anime");
 		else if (id === 5000) {
 			cats.add("series");
@@ -39,6 +49,7 @@ function torznabCatsToInternal(catParam: string | null): Category[] {
 		} else if (id >= 5000 && id < 6000) cats.add("series");
 		else if (id >= 2000 && id < 3000) cats.add("movies");
 	}
+
 	return Array.from(cats);
 }
 
