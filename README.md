@@ -33,6 +33,8 @@ At startup, environment variables can override values from the config file:
 - `SCRAPER_ENABLED`
 - `SCRAPER_INTERVAL_MINUTES`
 - `SCRAPER_UDP_TIMEOUT_MS`
+- `REQUESTS_ENABLED`
+- `REQUESTS_RATE_LIMIT_WINDOW_MINUTES`
 
 Example:
 
@@ -57,6 +59,10 @@ Example:
 		"enabled": true,
 		"intervalMinutes": 30,
 		"udpTimeoutMs": 5000,
+	},
+	"requests": {
+		"enabled": true,
+		"rateLimitWindowMinutes": 60,
 	},
 	"database": {
 		"url": "sqlite://data/torrents.db",
@@ -229,6 +235,49 @@ Example:
 		"enabled": true,
 		"intervalMinutes": 30,
 		"udpTimeoutMs": 5000,
+	},
+}
+```
+
+### Requests
+
+Visitors can ask for a title to be added by submitting its TheTVDB ID to `POST /api/requests` with a JSON body like `{ "kind": "series", "id": 359274 }`. `kind` is one of `anime`, `series`, or `movies` (anime and series both use a TheTVDB **Series ID**; movies use a **Movies ID**).
+
+Each unique `(kind, id)` is stored once, with a counter, the time of the first request, and the time of the most recent request. Submitting the same ID again just increments the counter and refreshes the timestamp.
+
+The endpoint is heavily rate limited per client IP (by default, one request per hour). This limit is held in memory only and is **not persisted**, so it resets whenever the server restarts. Because the limit is IP-based, `server.proxy` must be set correctly (see above) or all requests may be grouped under the proxy IP.
+
+#### `requests.enabled`
+
+Whether the request endpoint is available.
+
+Set to `false` to disable it entirely. When disabled, the route is not registered and the frontend hides the request page.
+
+Default:
+
+```json
+true
+```
+
+#### `requests.rateLimitWindowMinutes`
+
+How long, in minutes, each client IP must wait between requests.
+
+For example, `60` allows one request per hour per IP; `1440` would allow one per day.
+
+Default:
+
+```json
+60
+```
+
+Example:
+
+```jsonc
+{
+	"requests": {
+		"enabled": true,
+		"rateLimitWindowMinutes": 60,
 	},
 }
 ```
