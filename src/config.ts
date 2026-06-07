@@ -48,6 +48,10 @@ export interface Config {
 		intervalMinutes: number;
 		udpTimeoutMs: number;
 	};
+	requests: {
+		enabled: boolean;
+		rateLimitWindowMinutes: number;
+	};
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -68,6 +72,10 @@ const DEFAULT_CONFIG: Config = {
 		enabled: true,
 		intervalMinutes: 30,
 		udpTimeoutMs: 5000,
+	},
+	requests: {
+		enabled: true,
+		rateLimitWindowMinutes: 60,
 	},
 	database: {
 		url: "sqlite://data/torrents.db",
@@ -136,6 +144,12 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.SCRAPER_UDP_TIMEOUT_MS) {
 		const n = parseInt(process.env.SCRAPER_UDP_TIMEOUT_MS, 10);
 		if (Number.isFinite(n) && n > 0) config.scraper.udpTimeoutMs = n;
+	}
+
+	if (process.env.REQUESTS_ENABLED) config.requests.enabled = process.env.REQUESTS_ENABLED === "true";
+	if (process.env.REQUESTS_RATE_LIMIT_WINDOW_MINUTES) {
+		const n = parseInt(process.env.REQUESTS_RATE_LIMIT_WINDOW_MINUTES, 10);
+		if (Number.isFinite(n) && n > 0) config.requests.rateLimitWindowMinutes = n;
 	}
 
 	return config;

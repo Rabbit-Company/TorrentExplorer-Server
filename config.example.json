@@ -31,5 +31,9 @@
 		"enabled": true,
 		"intervalMinutes": 30,
 		"udpTimeoutMs": 5000
+	},
+	"requests": {
+		"enabled": true,
+		"rateLimitWindowMinutes": 60
 	}
 }

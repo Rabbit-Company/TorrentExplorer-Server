@@ -15,6 +15,7 @@ import { Logger } from "./logger.ts";
 import { Algorithm, rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 import { ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middleware/ip-extract";
 import { registerTorznabRoutes } from "./routes/torznab.ts";
+import { registerRequestRoutes } from "./routes/requests.ts";
 
 /**
  * One-shot backfill: for any release whose info_hash or trackers are still
@@ -85,6 +86,7 @@ async function main() {
 	registerInfoRoutes(app, { db, config });
 	registerCategoryRoutes(app, { db, storage, config });
 	registerTorrentRoutes(app, { db, storage });
+	registerRequestRoutes(app, { db, config });
 	registerTorznabRoutes(app, { db, config });
 
 	app.get("/", (ctx) =>
@@ -98,6 +100,7 @@ async function main() {
 				"GET  /api/{anime|movies|series}/:id",
 				"POST /api/{anime|movies|series}  (multipart: torrent + mediainfo)",
 				"GET  /api/torrent/{anime|movies|series}/:id",
+				"POST /api/requests  (json: { kind, id })",
 				"GET  /api/torznab?t=caps",
 				"GET  /api/torznab?t=search&q=&cat=&offset=&limit=",
 				"GET  /api/torznab?t=tvsearch&q=&season=&ep=",

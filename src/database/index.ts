@@ -64,6 +64,15 @@ export interface MissingMetadataRow {
 	torrent_file: string;
 }
 
+export interface MediaRequest {
+	id: number;
+	kind: Category;
+	tvdb_id: number;
+	counter: number;
+	created: number;
+	last_updated: number;
+}
+
 function parseSearchQuery(raw: string): { title: string; year: number | null } {
 	const trimmed = raw.trim();
 	const parenMatch = trimmed.match(/\((\d{4})\)/);
@@ -97,6 +106,17 @@ function toListItem(r: Release): ReleaseListItem {
 		leechers: r.leechers === null || r.leechers === undefined ? null : Number(r.leechers),
 		completed: r.completed === null || r.completed === undefined ? null : Number(r.completed),
 		last_scraped_at: r.last_scraped_at === null || r.last_scraped_at === undefined ? null : Number(r.last_scraped_at),
+	};
+}
+
+function toMediaRequest(r: MediaRequest): MediaRequest {
+	return {
+		id: Number(r.id),
+		kind: r.kind,
+		tvdb_id: Number(r.tvdb_id),
+		counter: Number(r.counter),
+		created: Number(r.created),
+		last_updated: Number(r.last_updated),
 	};
 }
 
@@ -173,6 +193,19 @@ export class Database {
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_category ON releases (category)`).catch(() => {});
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_uploaded_at ON releases (uploaded_at)`).catch(() => {});
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_releases_info_hash ON releases (info_hash)`).catch(() => {});
+
+		await this.sql.unsafe(`
+			CREATE TABLE IF NOT EXISTS requests (
+				${idColumn},
+				kind VARCHAR(16) NOT NULL,
+				tvdb_id BIGINT NOT NULL,
+				counter INTEGER NOT NULL DEFAULT 1,
+				created BIGINT NOT NULL,
+				last_updated BIGINT NOT NULL
+			)
+		`);
+		await this.sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_kind_tvdb ON requests (kind, tvdb_id)`).catch(() => {});
+		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_requests_counter ON requests (counter)`).catch(() => {});
 	}
 
 	async insert(entry: Omit<Release, "id">): Promise<Release> {
@@ -485,5 +518,51 @@ export class Database {
 				WHERE info_hash = ${u.info_hash}
 			`;
 		}
+	}
+
+	async findRequest(kind: Category, tvdbId: number): Promise<MediaRequest | null> {
+		const rows = (await this.sql`
+			SELECT * FROM requests WHERE kind = ${kind} AND tvdb_id = ${tvdbId} LIMIT 1
+		`) as unknown as MediaRequest[];
+		return rows[0] ? toMediaRequest(rows[0]) : null;
+	}
+
+	async recordRequest(kind: Category, tvdbId: number): Promise<MediaRequest> {
+		const now = Date.now();
+
+		const existing = await this.findRequest(kind, tvdbId);
+		if (existing) return this.incrementRequest(kind, tvdbId, now);
+
+		try {
+			const rows = (await this.sql`
+				INSERT INTO requests ${this.sql({ kind, tvdb_id: tvdbId, counter: 1, created: now, last_updated: now })}
+				${this.driver !== "mysql" ? this.sql`RETURNING *` : this.sql``}
+			`) as unknown as MediaRequest[];
+
+			if (this.driver === "mysql") {
+				const found = await this.findRequest(kind, tvdbId);
+				if (!found) throw new Error("Insert failed: could not retrieve new request row");
+				return found;
+			}
+			return toMediaRequest(rows[0]!);
+		} catch {
+			return this.incrementRequest(kind, tvdbId, now);
+		}
+	}
+
+	private async incrementRequest(kind: Category, tvdbId: number, now: number): Promise<MediaRequest> {
+		const rows = (await this.sql`
+			UPDATE requests
+			SET counter = counter + 1, last_updated = ${now}
+			WHERE kind = ${kind} AND tvdb_id = ${tvdbId}
+			${this.driver !== "mysql" ? this.sql`RETURNING *` : this.sql``}
+		`) as unknown as MediaRequest[];
+
+		if (this.driver === "mysql") {
+			const found = await this.findRequest(kind, tvdbId);
+			if (!found) throw new Error("Update failed: could not retrieve request row");
+			return found;
+		}
+		return toMediaRequest(rows[0]!);
 	}
 }

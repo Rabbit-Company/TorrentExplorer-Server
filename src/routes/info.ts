@@ -18,6 +18,10 @@ export function registerInfoRoutes(app: Web, services: Services): void {
 				releaseGroup: config.brand.releaseGroup,
 				stats,
 				donation: { xmr: config.donation.xmr },
+				requests: {
+					enabled: config.requests.enabled,
+					rateLimitWindowMinutes: config.requests.rateLimitWindowMinutes,
+				},
 			},
 			200,
 			{ "Cache-Control": "public, max-age=30, s-maxage=30" },
