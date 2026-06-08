@@ -73,6 +73,15 @@ export interface MediaRequest {
 	last_updated: number;
 }
 
+export interface Comment {
+	id: number;
+	release_id: number;
+	parent_id: number | null;
+	author_type: "anonymous" | "owner";
+	body: string;
+	created_at: number;
+}
+
 function parseSearchQuery(raw: string): { title: string; year: number | null } {
 	const trimmed = raw.trim();
 	const parenMatch = trimmed.match(/\((\d{4})\)/);
@@ -117,6 +126,17 @@ function toMediaRequest(r: MediaRequest): MediaRequest {
 		counter: Number(r.counter),
 		created: Number(r.created),
 		last_updated: Number(r.last_updated),
+	};
+}
+
+function toComment(r: Comment): Comment {
+	return {
+		id: Number(r.id),
+		release_id: Number(r.release_id),
+		parent_id: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
+		author_type: r.author_type,
+		body: r.body,
+		created_at: Number(r.created_at),
 	};
 }
 
@@ -206,6 +226,20 @@ export class Database {
 		`);
 		await this.sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_kind_tvdb ON requests (kind, tvdb_id)`).catch(() => {});
 		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_requests_counter ON requests (counter)`).catch(() => {});
+
+		await this.sql.unsafe(`
+			CREATE TABLE IF NOT EXISTS comments (
+				${idColumn},
+				release_id BIGINT NOT NULL,
+				parent_id BIGINT,
+				author_type VARCHAR(16) NOT NULL,
+				body TEXT NOT NULL,
+				created_at BIGINT NOT NULL
+			)
+		`);
+		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_comments_release ON comments (release_id)`).catch(() => {});
+		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments (parent_id)`).catch(() => {});
+		await this.sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments (release_id, parent_id, id)`).catch(() => {});
 	}
 
 	async insert(entry: Omit<Release, "id">): Promise<Release> {
@@ -564,5 +598,48 @@ export class Database {
 			return found;
 		}
 		return toMediaRequest(rows[0]!);
+	}
+
+	async listCommentsForRelease(releaseId: number): Promise<Comment[]> {
+		const rows = (await this.sql`
+			SELECT id, release_id, parent_id, author_type, body, created_at
+			FROM comments WHERE release_id = ${releaseId}
+			ORDER BY id ASC
+		`) as unknown as Comment[];
+		return rows.map(toComment);
+	}
+
+	async findComment(id: number): Promise<Comment | null> {
+		const rows = (await this.sql`
+			SELECT id, release_id, parent_id, author_type, body, created_at
+			FROM comments WHERE id = ${id} LIMIT 1
+		`) as unknown as Comment[];
+		return rows[0] ? toComment(rows[0]) : null;
+	}
+
+	async insertComment(entry: Omit<Comment, "id">): Promise<Comment> {
+		const rows = (await this.sql`
+			INSERT INTO comments ${this.sql({
+				release_id: entry.release_id,
+				parent_id: entry.parent_id,
+				author_type: entry.author_type,
+				body: entry.body,
+				created_at: entry.created_at,
+			})}
+			${this.driver !== "mysql" ? this.sql`RETURNING *` : this.sql``}
+		`) as unknown as Comment[];
+
+		if (this.driver === "mysql") {
+			const id = (rows as any).lastInsertRowid ?? (rows as any).insertId;
+			const found = await this.findComment(Number(id));
+			if (!found) throw new Error("Insert failed: could not retrieve new comment row");
+			return found;
+		}
+		return toComment(rows[0]!);
+	}
+
+	/** Deletes the comment and, if it's a root, its replies (parent_id = id). */
+	async deleteComment(id: number): Promise<void> {
+		await this.sql`DELETE FROM comments WHERE id = ${id} OR parent_id = ${id}`;
 	}
 }

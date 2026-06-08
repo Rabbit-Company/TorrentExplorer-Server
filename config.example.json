@@ -35,5 +35,13 @@
 	"requests": {
 		"enabled": true,
 		"rateLimitWindowMinutes": 60
+	},
+	"comments": {
+		"enabled": true,
+		"maxLength": 1000,
+		"rateLimit": {
+			"burst": 3,
+			"refillIntervalMinutes": 5
+		}
 	}
 }

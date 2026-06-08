@@ -35,6 +35,10 @@ At startup, environment variables can override values from the config file:
 - `SCRAPER_UDP_TIMEOUT_MS`
 - `REQUESTS_ENABLED`
 - `REQUESTS_RATE_LIMIT_WINDOW_MINUTES`
+- `COMMENTS_ENABLED`
+- `COMMENTS_MAX_LENGTH`
+- `COMMENTS_RATE_LIMIT_BURST`
+- `COMMENTS_RATE_LIMIT_REFILL_MINUTES`
 
 Example:
 
@@ -63,6 +67,14 @@ Example:
 	"requests": {
 		"enabled": true,
 		"rateLimitWindowMinutes": 60,
+	},
+	"comments": {
+		"enabled": true,
+		"maxLength": 1000,
+		"rateLimit": {
+			"burst": 3,
+			"refillIntervalMinutes": 5,
+		},
 	},
 	"database": {
 		"url": "sqlite://data/torrents.db",
@@ -282,6 +294,87 @@ Example:
 }
 ```
 
+### Comments
+
+Visitors can comment under any release. There is no registration and no login. Anyone can post, and comments with no `Authorization` header are attributed to **Anonymous**.
+
+Threads are limited to a single level of nesting: you can reply to a top-level comment, but you cannot reply to a reply. Top-level comments and the replies beneath each one are both shown oldest-first. Deleting a top-level comment also deletes its replies.
+
+Posting is heavily rate limited per client IP using a **token bucket**. Each IP starts with a small burst of tokens (`comments.rateLimit.burst`) and regains one token every `comments.rateLimit.refillIntervalMinutes`. Normal back-and-forth in a thread is unaffected, but anyone posting rapidly drains their bucket and is then throttled to one comment per refill interval while tokens slowly return. This limit is held in memory only and is **not persisted**, so it resets when the server restarts. Because it is IP-based, `server.proxy` must be set correctly (see above) or all comments may be grouped under the proxy IP.
+
+#### Owner comments
+
+If a request includes a valid `Authorization: Bearer <token>` header (the same token used for uploads), the comment is attributed to the configured `brand.releaseGroup` instead of Anonymous. Owner comments skip the rate limit and the character limit.
+
+Token handling is strict:
+
+- **No `Authorization` header** -> posted as Anonymous.
+- **Valid token** -> posted as the release group (owner).
+- **Present but wrong/malformed token** -> rejected with `401`; nothing is posted.
+
+The web UI never shows a login or token field. If a bearer token is present in the browser's `localStorage` under the key `token`, the UI posts and deletes as the owner, shows a "responding as owner" indicator, and renders a delete control under each comment. Otherwise it behaves as an anonymous visitor.
+
+#### `comments.enabled`
+
+Whether the comment endpoints are available.
+
+Set to `false` to disable them entirely. When disabled, the routes are not registered and the frontend hides the comments section.
+
+Default:
+
+```json
+true
+```
+
+#### `comments.maxLength`
+
+Maximum number of characters allowed in an anonymous comment.
+
+This limit does **not** apply to owner comments (authenticated with a valid bearer token); a separate, very large hard cap protects the database regardless.
+
+Default:
+
+```json
+1000
+```
+
+#### `comments.rateLimit.burst`
+
+Token-bucket capacity per client IP - the number of comments that can be posted in quick succession before throttling kicks in.
+
+Default:
+
+```json
+3
+```
+
+#### `comments.rateLimit.refillIntervalMinutes`
+
+How long, in minutes, it takes to regain one token. At steady state this is the minimum time between comments from a single IP.
+
+For example, `5` allows roughly one comment every five minutes (after the initial burst is spent).
+
+Default:
+
+```json
+5
+```
+
+Example:
+
+```jsonc
+{
+	"comments": {
+		"enabled": true,
+		"maxLength": 1000,
+		"rateLimit": {
+			"burst": 3,
+			"refillIntervalMinutes": 5,
+		},
+	},
+}
+```
+
 ### Database
 
 `database.url` uses Bun's built-in SQL driver, so switching databases only requires changing the connection URL:
@@ -369,7 +462,16 @@ Example response:
 ```json
 {
 	"releaseGroup": "RabbitCompany",
-	"stats": { "anime": 42, "movies": 7, "series": 3 }
+	"stats": { "anime": 42, "movies": 7, "series": 3 },
+	"donation": {},
+	"requests": {
+		"enabled": true,
+		"rateLimitWindowMinutes": 60
+	},
+	"comments": {
+		"enabled": true,
+		"maxLength": 1000
+	}
 }
 ```
 
@@ -472,6 +574,109 @@ Response:
 Streams the original `.torrent` file back to the client using its original filename.
 
 This is intended for direct browser download or opening in a torrent client.
+
+### `GET /api/{anime|movies|series}/:id/comments`
+
+Returns the comment thread for a release. Top-level comments are sorted oldest-first, each with its replies (also oldest-first) nested one level deep.
+
+`author` is the resolved display name: `"Anonymous"` for anonymous comments, or the release group name for owner comments. `author_type` is `"anonymous"` or `"owner"`.
+
+Example response:
+
+```json
+{
+	"comments": [
+		{
+			"id": 12,
+			"parent_id": null,
+			"author": "Anonymous",
+			"author_type": "anonymous",
+			"body": "Audio is completely out of sync.",
+			"created_at": 1713571200000,
+			"replies": [
+				{
+					"id": 15,
+					"parent_id": 12,
+					"author": "RabbitCompany",
+					"author_type": "owner",
+					"body": "I checked and this isn't the case. Can you try mpv?",
+					"created_at": 1713571320000
+				},
+				{
+					"id": 18,
+					"parent_id": 12,
+					"author": "Anonymous",
+					"author_type": "anonymous",
+					"body": "It works with mpv, thanks!",
+					"created_at": 1713571500000
+				}
+			]
+		}
+	]
+}
+```
+
+### `POST /api/{anime|movies|series}/:id/comments`
+
+Posts a comment under a release.
+
+#### Authorization
+
+Optional. Omit the header to post as Anonymous, or send a valid token to post as the release group:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+A present-but-invalid token is rejected with `401` and nothing is stored.
+
+#### Request body
+
+Send the request as `application/json`.
+
+| Field       | Type   | Required | Notes                                                                        |
+| ----------- | ------ | -------- | ---------------------------------------------------------------------------- |
+| `body`      | string | yes      | The comment text. Limited to `comments.maxLength` chars for anonymous posts. |
+| `parent_id` | number | no       | ID of the top-level comment being replied to. Omit for a top-level comment.  |
+
+`parent_id` must reference an existing top-level comment on the same release; replying to a reply is rejected.
+
+Example (anonymous top-level comment):
+
+```bash
+curl -X POST http://localhost:3000/api/anime/1/comments \
+  -H "Content-Type: application/json" \
+  -d '{ "body": "Audio is completely out of sync." }'
+```
+
+Example (owner reply):
+
+```bash
+curl -X POST http://localhost:3000/api/anime/1/comments \
+  -H "Authorization: Bearer <your_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "body": "Try mpv media player.", "parent_id": 12 }'
+```
+
+Response:
+
+- `201 Created` with the created comment in the body.
+- `401 Unauthorized` if a token is supplied but invalid.
+- `429 Too Many Requests` if the per-IP rate limit is exceeded, with a `Retry-After` header.
+
+### `DELETE /api/{anime|movies|series}/:id/comments/:commentId`
+
+Deletes a comment. **Owner only** - requires a valid bearer token; any other request (including no token) is rejected with `401`. Deleting a top-level comment also deletes its replies.
+
+```bash
+curl -X DELETE http://localhost:3000/api/anime/1/comments/12 \
+  -H "Authorization: Bearer <your_token>"
+```
+
+Response:
+
+- `200 OK` with `{ "deleted": true }` on success.
+- `404 Not Found` if the comment doesn't exist on that release.
 
 ### Torznab / RSS endpoints
 

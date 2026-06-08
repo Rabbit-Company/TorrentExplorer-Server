@@ -52,6 +52,14 @@ export interface Config {
 		enabled: boolean;
 		rateLimitWindowMinutes: number;
 	};
+	comments: {
+		enabled: boolean;
+		maxLength: number;
+		rateLimit: {
+			burst: number;
+			refillIntervalMinutes: number;
+		};
+	};
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -76,6 +84,11 @@ const DEFAULT_CONFIG: Config = {
 	requests: {
 		enabled: true,
 		rateLimitWindowMinutes: 60,
+	},
+	comments: {
+		enabled: true,
+		maxLength: 1000,
+		rateLimit: { burst: 3, refillIntervalMinutes: 5 },
 	},
 	database: {
 		url: "sqlite://data/torrents.db",
@@ -152,5 +165,18 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 		if (Number.isFinite(n) && n > 0) config.requests.rateLimitWindowMinutes = n;
 	}
 
+	if (process.env.COMMENTS_ENABLED) config.comments.enabled = process.env.COMMENTS_ENABLED === "true";
+	if (process.env.COMMENTS_MAX_LENGTH) {
+		const n = parseInt(process.env.COMMENTS_MAX_LENGTH, 10);
+		if (Number.isFinite(n) && n > 0) config.comments.maxLength = n;
+	}
+	if (process.env.COMMENTS_RATE_LIMIT_BURST) {
+		const n = parseInt(process.env.COMMENTS_RATE_LIMIT_BURST, 10);
+		if (Number.isFinite(n) && n > 0) config.comments.rateLimit.burst = n;
+	}
+	if (process.env.COMMENTS_RATE_LIMIT_REFILL_MINUTES) {
+		const n = parseInt(process.env.COMMENTS_RATE_LIMIT_REFILL_MINUTES, 10);
+		if (Number.isFinite(n) && n > 0) config.comments.rateLimit.refillIntervalMinutes = n;
+	}
 	return config;
 }

@@ -22,6 +22,10 @@ export function registerInfoRoutes(app: Web, services: Services): void {
 					enabled: config.requests.enabled,
 					rateLimitWindowMinutes: config.requests.rateLimitWindowMinutes,
 				},
+				comments: {
+					enabled: config.comments.enabled,
+					maxLength: config.comments.maxLength,
+				},
 			},
 			200,
 			{ "Cache-Control": "public, max-age=30, s-maxage=30" },
