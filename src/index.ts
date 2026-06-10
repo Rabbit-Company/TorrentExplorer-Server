@@ -18,6 +18,8 @@ import { registerTorznabRoutes } from "./routes/torznab.ts";
 import { registerRequestRoutes } from "./routes/requests.ts";
 import { registerCommentRoutes } from "./routes/comments.ts";
 import { Ntfy } from "./notifications/ntfy.ts";
+import { EncoderPoller } from "./encoders.ts";
+import { registerEncoderRoutes } from "./routes/encoders.ts";
 
 /**
  * One-shot backfill: for any release whose info_hash or trackers are still
@@ -70,6 +72,9 @@ async function main() {
 		Logger.info("Ntfy: disabled");
 	}
 
+	const encoders = new EncoderPoller(config);
+	encoders.start();
+
 	let proxy: IpExtractionPreset = "direct";
 	if (isIpExtractionPreset(config.server.proxy)) proxy = config.server.proxy;
 
@@ -97,6 +102,7 @@ async function main() {
 	registerTorrentRoutes(app, { db, storage });
 	registerRequestRoutes(app, { db, config, ntfy });
 	registerCommentRoutes(app, { db, config, ntfy });
+	registerEncoderRoutes(app, { encoders });
 	registerTorznabRoutes(app, { db, config });
 
 	app.get("/", (ctx) =>

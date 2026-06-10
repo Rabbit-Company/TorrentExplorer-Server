@@ -70,6 +70,11 @@ export interface Config {
 		username?: string;
 		password?: string;
 	};
+	encoders: {
+		enabled: boolean;
+		pollIntervalSeconds: number;
+		list: Array<{ name: string; url: string; password: string }>;
+	};
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -118,6 +123,11 @@ const DEFAULT_CONFIG: Config = {
 		enabled: false,
 		server: "https://ntfy.sh",
 		topic: "torrent-explorer",
+	},
+	encoders: {
+		enabled: false,
+		pollIntervalSeconds: 10,
+		list: [],
 	},
 };
 
@@ -200,6 +210,19 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.NTFY_TOKEN) config.ntfy.token = process.env.NTFY_TOKEN;
 	if (process.env.NTFY_USERNAME) config.ntfy.username = process.env.NTFY_USERNAME;
 	if (process.env.NTFY_PASSWORD) config.ntfy.password = process.env.NTFY_PASSWORD;
+
+	if (process.env.ENCODERS_ENABLED) config.encoders.enabled = process.env.ENCODERS_ENABLED === "true";
+	if (process.env.ENCODERS_POLL_SECONDS) config.encoders.pollIntervalSeconds = parseInt(process.env.ENCODERS_POLL_SECONDS, 10);
+
+	for (let i = 1; i <= 50; i++) {
+		if (process.env[`ENCODER${i}_NAME`] && process.env[`ENCODER${i}_URL`] && process.env[`ENCODER${i}_PASSWORD`]) {
+			config.encoders.list.push({
+				name: process.env[`ENCODER${i}_NAME`]!,
+				url: process.env[`ENCODER${i}_URL`]!,
+				password: process.env[`ENCODER${i}_PASSWORD`]!,
+			});
+		}
+	}
 
 	return config;
 }

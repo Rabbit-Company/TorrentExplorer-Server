@@ -45,6 +45,11 @@ At startup, environment variables can override values from the config file:
 - `NTFY_TOKEN`
 - `NTFY_USERNAME`
 - `NTFY_PASSWORD`
+- `ENCODERS_ENABLED`
+- `ENCODERS_POLL_SECONDS`
+- `ENCODER{n}_NAME` - `{n}` can be any number between 1 and 50
+- `ENCODER{n}_URL` - `{n}` can be any number between 1 and 50
+- `ENCODER{n}_PASSWORD` - `{n}` can be any number between 1 and 50
 
 Example:
 
@@ -102,6 +107,14 @@ Example:
 		"enabled": false,
 		"server": "https://ntfy.sh",
 		"topic": "topicName",
+	},
+	"encoders": {
+		"enabled": false,
+		"pollIntervalSeconds": 10,
+		"list": [
+			{ "name": "Main", "url": "http://192.168.1.50:3000", "password": "rabbitencoder" },
+			{ "name": "GPU Box", "url": "http://192.168.1.51:3000", "password": "secret2" },
+		],
 	},
 }
 ```
