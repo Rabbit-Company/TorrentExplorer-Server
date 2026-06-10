@@ -3,10 +3,12 @@ import type { Database, Category } from "../database/index.ts";
 import type { Config } from "../config.ts";
 import { Algorithm, rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 import { Logger } from "../logger.ts";
+import type { Ntfy } from "../notifications/ntfy.ts";
 
 interface Services {
 	db: Database;
 	config: Config;
+	ntfy: Ntfy;
 }
 
 const VALID_KINDS: ReadonlySet<Category> = new Set<Category>(["anime", "series", "movies"]);
@@ -46,7 +48,7 @@ function windowLabel(minutes: number): string {
 }
 
 export function registerRequestRoutes(app: Web, services: Services): void {
-	const { db, config } = services;
+	const { db, config, ntfy } = services;
 
 	if (!config.requests.enabled) {
 		Logger.info("Requests: disabled by config");
@@ -98,6 +100,15 @@ export function registerRequestRoutes(app: Web, services: Services): void {
 
 			try {
 				const record = await db.recordRequest(kind, tvdbId);
+
+				const label = kind === "movies" ? "Movie" : kind === "series" ? "Series" : "Anime";
+				ntfy.notify({
+					title: `New ${label.toLowerCase()} request`,
+					message: `${label} with TheTVDB ID ${tvdbId} was requested (${record.counter}× total).`,
+					tags: ["inbox_tray", kind === "movies" ? "clapper" : "tv"],
+					click: `https://thetvdb.com/dereferrer/${kind === "movies" ? "movie" : "series"}/${tvdbId}`,
+				});
+
 				return ctx.json(
 					{
 						id: record.tvdb_id,

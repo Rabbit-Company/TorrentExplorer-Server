@@ -17,6 +17,7 @@ import { ipExtract, type IpExtractionPreset } from "@rabbit-company/web-middlewa
 import { registerTorznabRoutes } from "./routes/torznab.ts";
 import { registerRequestRoutes } from "./routes/requests.ts";
 import { registerCommentRoutes } from "./routes/comments.ts";
+import { Ntfy } from "./notifications/ntfy.ts";
 
 /**
  * One-shot backfill: for any release whose info_hash or trackers are still
@@ -62,6 +63,13 @@ async function main() {
 		Logger.info(`Storage: Local (${config.storage.local.path})`);
 	}
 
+	const ntfy = new Ntfy(config.ntfy);
+	if (ntfy.isEnabled) {
+		Logger.info(`Ntfy: enabled (${config.ntfy.server} -> ${config.ntfy.topic})`);
+	} else {
+		Logger.info("Ntfy: disabled");
+	}
+
 	let proxy: IpExtractionPreset = "direct";
 	if (isIpExtractionPreset(config.server.proxy)) proxy = config.server.proxy;
 
@@ -87,8 +95,8 @@ async function main() {
 	registerInfoRoutes(app, { db, config });
 	registerCategoryRoutes(app, { db, storage, config });
 	registerTorrentRoutes(app, { db, storage });
-	registerRequestRoutes(app, { db, config });
-	registerCommentRoutes(app, { db, config });
+	registerRequestRoutes(app, { db, config, ntfy });
+	registerCommentRoutes(app, { db, config, ntfy });
 	registerTorznabRoutes(app, { db, config });
 
 	app.get("/", (ctx) =>

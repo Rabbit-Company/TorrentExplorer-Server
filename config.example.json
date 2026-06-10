@@ -43,5 +43,13 @@
 			"burst": 3,
 			"refillIntervalMinutes": 5
 		}
+	},
+	"ntfy": {
+		"enabled": false,
+		"server": "https://ntfy.sh",
+		"topic": "torrent-explorer",
+		"token": "tk_your_token_here",
+		"username": "your_username",
+		"password": "your_password"
 	}
 }

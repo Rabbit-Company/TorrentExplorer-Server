@@ -60,6 +60,16 @@ export interface Config {
 			refillIntervalMinutes: number;
 		};
 	};
+	ntfy: {
+		enabled: boolean;
+		server: string;
+		topic: string;
+		/** Optional: token authentication (takes precedence over username/password). */
+		token?: string;
+		/** Optional: username/password authentication. */
+		username?: string;
+		password?: string;
+	};
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -103,6 +113,11 @@ const DEFAULT_CONFIG: Config = {
 			accessKeyId: "",
 			secretAccessKey: "",
 		},
+	},
+	ntfy: {
+		enabled: false,
+		server: "https://ntfy.sh",
+		topic: "torrent-explorer",
 	},
 };
 
@@ -178,5 +193,13 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 		const n = parseInt(process.env.COMMENTS_RATE_LIMIT_REFILL_MINUTES, 10);
 		if (Number.isFinite(n) && n > 0) config.comments.rateLimit.refillIntervalMinutes = n;
 	}
+
+	if (process.env.NTFY_ENABLED) config.ntfy.enabled = process.env.NTFY_ENABLED === "true";
+	if (process.env.NTFY_SERVER) config.ntfy.server = process.env.NTFY_SERVER;
+	if (process.env.NTFY_TOPIC) config.ntfy.topic = process.env.NTFY_TOPIC;
+	if (process.env.NTFY_TOKEN) config.ntfy.token = process.env.NTFY_TOKEN;
+	if (process.env.NTFY_USERNAME) config.ntfy.username = process.env.NTFY_USERNAME;
+	if (process.env.NTFY_PASSWORD) config.ntfy.password = process.env.NTFY_PASSWORD;
+
 	return config;
 }

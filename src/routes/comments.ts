@@ -4,10 +4,12 @@ import type { Config } from "../config.ts";
 import { Algorithm, rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 import { Logger } from "../logger.ts";
 import { timingSafeEqual } from "node:crypto";
+import type { Ntfy } from "../notifications/ntfy.ts";
 
 interface Services {
 	db: Database;
 	config: Config;
+	ntfy: Ntfy;
 }
 
 const CATEGORIES: ReadonlySet<Category> = new Set<Category>(["anime", "movies", "series"]);
@@ -63,7 +65,7 @@ function refillLabel(minutes: number): string {
 }
 
 export function registerCommentRoutes(app: Web, services: Services): void {
-	const { db, config } = services;
+	const { db, config, ntfy } = services;
 
 	if (!config.comments.enabled) {
 		Logger.info("Comments: disabled by config");
@@ -207,6 +209,15 @@ export function registerCommentRoutes(app: Web, services: Services): void {
 				Logger.error("Comment insert failed:", err);
 				return ctx.json({ error: "Failed to save comment" }, 500);
 			}
+
+			const snippet = body.length > 300 ? `${body.slice(0, 300)}…` : body;
+			const author = isOwner ? config.brand.releaseGroup : "Anonymous";
+			ntfy.notify({
+				title: parentId ? `New reply on ${release.title}` : `New comment on ${release.title}`,
+				message: `${author}: ${snippet}`,
+				tags: ["speech_balloon"],
+				click: config.frontend.url ? `${config.frontend.url}/${category}/${releaseId}` : undefined,
+			});
 
 			return ctx.json(renderComment(created, config.brand.releaseGroup), 201, { "Cache-Control": "no-store" });
 		});

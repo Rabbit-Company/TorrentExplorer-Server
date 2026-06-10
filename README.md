@@ -39,6 +39,12 @@ At startup, environment variables can override values from the config file:
 - `COMMENTS_MAX_LENGTH`
 - `COMMENTS_RATE_LIMIT_BURST`
 - `COMMENTS_RATE_LIMIT_REFILL_MINUTES`
+- `NTFY_ENABLED`
+- `NTFY_SERVER`
+- `NTFY_TOPIC`
+- `NTFY_TOKEN`
+- `NTFY_USERNAME`
+- `NTFY_PASSWORD`
 
 Example:
 
@@ -91,6 +97,11 @@ Example:
 			"accessKeyId": "...",
 			"secretAccessKey": "...",
 		},
+	},
+	"ntfy": {
+		"enabled": false,
+		"server": "https://ntfy.sh",
+		"topic": "topicName",
 	},
 }
 ```
@@ -371,6 +382,91 @@ Example:
 			"burst": 3,
 			"refillIntervalMinutes": 5,
 		},
+	},
+}
+```
+
+### Ntfy notifications
+
+The server can publish push notifications to an [ntfy](https://docs.ntfy.sh/) topic so you find out immediately when something happens, without polling the API.
+
+A notification is sent when:
+
+- a visitor **requests** a title (`POST /api/requests`) - the notification includes the kind (movie/series/anime), the TheTVDB ID, and how many times that title has been requested in total. Tapping it opens the title on thetvdb.com.
+- a visitor **posts a comment or reply** on any release - the notification includes the release title, the author (Anonymous or the release group), and the start of the comment. When `frontend.url` is set, tapping it opens the release's detail page. Notifications are fire-and-forget: a slow or unreachable ntfy server never delays or fails the API request that triggered the notification. Failed publishes are logged as warnings.
+
+You can use the public `https://ntfy.sh` service (pick a hard-to-guess topic name - topics are essentially passwords) or any self-hosted ntfy instance.
+
+#### `ntfy.enabled`
+
+Whether notifications are sent at all. When `false` (the default), the feature is completely inert and no outbound requests are made.
+
+Default:
+
+```json
+false
+```
+
+#### `ntfy.server`
+
+Base URL of the ntfy server to publish to.
+
+Default:
+
+```json
+"https://ntfy.sh"
+```
+
+#### `ntfy.topic`
+
+The topic to publish to. Subscribe to the same topic in the ntfy app (Android/iOS) or web app to receive the notifications.
+
+On the public ntfy.sh server anyone who knows the topic name can subscribe to it, so treat the topic name like a secret.
+
+Default:
+
+```json
+"topicName"
+```
+
+#### `ntfy.token` (optional)
+
+Access token for servers that require authentication, sent as `Authorization: Bearer <token>`. This is the recommended auth method and takes precedence over username/password when both are set.
+
+```jsonc
+{
+	"ntfy": {
+		"token": "tk_your_token_here",
+	},
+}
+```
+
+#### `ntfy.username` / `ntfy.password` (optional)
+
+Username/password authentication, sent as HTTP Basic auth. Only used when `ntfy.token` is not set. Both values must be provided.
+
+```jsonc
+{
+	"ntfy": {
+		"username": "your_username",
+		"password": "your_password",
+	},
+}
+```
+
+Full example:
+
+```jsonc
+{
+	"ntfy": {
+		"enabled": true,
+		"server": "https://ntfy.sh",
+		"topic": "topicName",
+		// Optional: token authentication
+		//"token": "tk_your_token_here",
+		// Optional: username/password authentication
+		//"username": "your_username",
+		//"password": "your_password",
 	},
 }
 ```
