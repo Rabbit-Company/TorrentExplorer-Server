@@ -37,6 +37,8 @@ export interface PublicQueueGroup {
 	progress: number; // 0-100 across the whole season
 	etaMs: number | null; // estimated time remaining for this season
 	active: boolean;
+	completed: boolean;
+	finishedAt: number | null;
 }
 
 export interface PublicEncoder {
@@ -197,14 +199,16 @@ function aggregate(jobs: RabbitJob[], now: number): { groups: PublicQueueGroup[]
 		const queued = arr.filter((j) => j.status === "queued").length;
 		const error = arr.filter((j) => j.status === "error").length;
 
-		// Only surface seasons that still have work to do.
-		if (encoding + queued === 0) continue;
+		const pending = encoding + queued;
+		const completed = pending === 0 && done > 0;
 
-		// A season's place in line is its earliest still-pending episode. The
-		// encoder processes by queueOrder, so the lowest pending order = next up.
-		// (Episodes of one season may be interleaved with other shows, so we key
-		// off the minimum rather than assuming a contiguous block.)
-		const minPendingOrder = Math.min(...arr.filter((j) => isActive(j.status) || j.status === "queued").map((j) => j.queueOrder));
+		if (pending === 0 && !completed) continue;
+
+		const minPendingOrder = completed
+			? Number.MAX_SAFE_INTEGER
+			: Math.min(...arr.filter((j) => isActive(j.status) || j.status === "queued").map((j) => j.queueOrder));
+
+		const finishedAt = completed ? Math.max(...arr.filter((j) => j.finishedAt).map((j) => j.finishedAt!), 0) || null : null;
 
 		const { title, season } = deriveGroup(arr[0]!);
 		const progress = total > 0 ? arr.reduce((s, j) => s + (j.status === "done" ? 100 : j.progress), 0) / total : 0;
@@ -213,7 +217,7 @@ function aggregate(jobs: RabbitJob[], now: number): { groups: PublicQueueGroup[]
 		groups.push({
 			title,
 			season,
-			queuePosition: minPendingOrder, // replaced with a 1-based rank after sorting
+			queuePosition: minPendingOrder,
 			total,
 			done,
 			encoding,
@@ -222,15 +226,22 @@ function aggregate(jobs: RabbitJob[], now: number): { groups: PublicQueueGroup[]
 			progress: Math.round(progress * 10) / 10,
 			etaMs: etaMs > 0 ? Math.round(etaMs) : null,
 			active: encoding > 0,
+			completed,
+			finishedAt,
 		});
 	}
 
-	// Order by real encode position, then collapse the raw queueOrder we stashed
-	// in queuePosition into a clean 1-based rank (1 = encoding now / up next).
-	groups.sort((a, b) => a.queuePosition - b.queuePosition);
-	groups.forEach((g, i) => {
+	const pendingGroups = groups.filter((g) => !g.completed).sort((a, b) => a.queuePosition - b.queuePosition);
+	pendingGroups.forEach((g, i) => {
 		g.queuePosition = i + 1;
 	});
+
+	const completedGroups = groups.filter((g) => g.completed).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+	completedGroups.forEach((g) => {
+		g.queuePosition = 0;
+	});
+
+	const sorted = [...pendingGroups, ...completedGroups];
 
 	const remainingJobs = jobs.filter((j) => isActive(j.status) || j.status === "queued");
 	const etaMs = estimateRemainingMs(remainingJobs, ref, now);
@@ -243,7 +254,7 @@ function aggregate(jobs: RabbitJob[], now: number): { groups: PublicQueueGroup[]
 		error: jobs.filter((j) => j.status === "error").length,
 	};
 
-	return { groups, etaMs: etaMs > 0 ? Math.round(etaMs) : null, totals };
+	return { groups: sorted, etaMs: etaMs > 0 ? Math.round(etaMs) : null, totals };
 }
 
 // Poller
