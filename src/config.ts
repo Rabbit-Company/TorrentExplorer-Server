@@ -34,6 +34,7 @@ export interface Config {
 		driver: StorageDriver;
 		local: {
 			path: string;
+			mediaPath: string;
 		};
 		s3: {
 			endpoint: string;
@@ -110,7 +111,10 @@ const DEFAULT_CONFIG: Config = {
 	},
 	storage: {
 		driver: "local",
-		local: { path: "./torrents" },
+		local: {
+			path: "./torrents",
+			mediaPath: "./media",
+		},
 		s3: {
 			endpoint: "",
 			region: "auto",
@@ -173,6 +177,8 @@ export async function loadConfig(path: string = "./config.json"): Promise<Config
 	if (process.env.DATABASE_URL) config.database.url = process.env.DATABASE_URL;
 	if (process.env.RELEASE_GROUP) config.brand.releaseGroup = process.env.RELEASE_GROUP;
 	if (process.env.STORAGE_DRIVER) config.storage.driver = process.env.STORAGE_DRIVER as StorageDriver;
+	if (process.env.STORAGE_LOCAL_PATH) config.storage.local.path = process.env.STORAGE_LOCAL_PATH;
+	if (process.env.STORAGE_LOCAL_MEDIA_PATH) config.storage.local.mediaPath = process.env.STORAGE_LOCAL_MEDIA_PATH;
 
 	if (process.env.SCRAPER_ENABLED) config.scraper.enabled = process.env.SCRAPER_ENABLED === "true";
 	if (process.env.SCRAPER_INTERVAL_MINUTES) {

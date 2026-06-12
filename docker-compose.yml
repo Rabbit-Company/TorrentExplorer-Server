@@ -18,6 +18,7 @@ services:
     volumes:
       #- ./config.json:/app/config.json
       - torrent_explorer_torrents:/app/torrents
+      - torrent_explorer_media:/app/media
       - torrent_explorer_data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -30,4 +31,6 @@ volumes:
   torrent_explorer_torrents:
     driver: local
   torrent_explorer_data:
+    driver: local
+  torrent_explorer_media:
     driver: local

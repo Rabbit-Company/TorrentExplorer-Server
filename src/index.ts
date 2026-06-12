@@ -21,6 +21,7 @@ import { Ntfy } from "./notifications/ntfy.ts";
 import { EncoderPoller } from "./encoders.ts";
 import { registerEncoderRoutes } from "./routes/encoders.ts";
 import { registerMediaRoutes } from "./routes/media.ts";
+import { RoutedStorage } from "./storage/routed.ts";
 
 /**
  * One-shot backfill: for any release whose info_hash or trackers are still
@@ -62,8 +63,15 @@ async function main() {
 		storage = new S3Storage(config.storage.s3);
 		Logger.info(`Storage: S3 (bucket=${config.storage.s3.bucket})`);
 	} else {
-		storage = new LocalStorage(config.storage.local.path);
-		Logger.info(`Storage: Local (${config.storage.local.path})`);
+		const torrents = new LocalStorage(config.storage.local.path);
+		const mediaPath = config.storage.local.mediaPath?.trim();
+		if (mediaPath) {
+			storage = new RoutedStorage(torrents, new LocalStorage(mediaPath));
+			Logger.info(`Storage: Local (torrents=${config.storage.local.path}, media=${mediaPath})`);
+		} else {
+			storage = torrents;
+			Logger.info(`Storage: Local (${config.storage.local.path})`);
+		}
 	}
 
 	const ntfy = new Ntfy(config.ntfy);

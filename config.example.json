@@ -17,7 +17,8 @@
 	"storage": {
 		"driver": "local",
 		"local": {
-			"path": "./torrents"
+			"path": "./torrents",
+			"mediaPath": "./media"
 		},
 		"s3": {
 			"endpoint": "https://s3.example.com",
