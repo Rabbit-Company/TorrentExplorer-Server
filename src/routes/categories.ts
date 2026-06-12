@@ -195,6 +195,9 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				}
 				const media = collected.media;
 
+				// Same category + title + year + season -> overwrite instead of duplicating.
+				const existing = await db.findDuplicate(category, parsedName.title, parsedName.year, parsedName.season);
+
 				const storageKey = `${category}/${sanitizeStorageKey(displayName)}.torrent`;
 
 				try {
@@ -218,7 +221,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				const now = Date.now();
 				let created;
 				try {
-					created = await db.insert({
+					const entry = {
 						category,
 						title: parsedName.title,
 						year: parsedName.year,
@@ -236,12 +239,28 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						leechers: null,
 						completed: null,
 						last_scraped_at: null,
-					});
+					};
+					created = existing ? await db.replace(existing.id, entry) : await db.insert(entry);
 				} catch (err: any) {
-					// Roll back stored files
-					await Promise.allSettled([...mediaKeys, storageKey].map((k) => storage.delete(k)));
+					// Roll back stored files (but never delete keys the old release still owns)
+					const oldKeys = existing ? new Set([existing.torrent_file]) : new Set<string>();
+					await Promise.allSettled([...mediaKeys, storageKey].filter((k) => !oldKeys.has(k)).map((k) => storage.delete(k)));
 					Logger.error("DB insert failed:", err);
 					return ctx.json({ error: "Failed to save release" }, 500);
+				}
+
+				// Clean up files that belonged to the previous version of this release.
+				if (existing) {
+					const keep = new Set<string>([...mediaKeys, storageKey]);
+					const stale: string[] = [];
+					if (!keep.has(existing.torrent_file)) stale.push(existing.torrent_file);
+					try {
+						const oldMediaKeys = await storage.list(mediaPrefix(existing.torrent_file));
+						stale.push(...oldMediaKeys.filter((k) => !keep.has(k)));
+					} catch (err: any) {
+						Logger.warn(`Could not list old media for cleanup: ${err.message ?? err}`);
+					}
+					if (stale.length > 0) await Promise.allSettled(stale.map((k) => storage.delete(k)));
 				}
 
 				return ctx.json(
@@ -254,12 +273,13 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						torrent_name: created.torrent_name,
 						tags: JSON.parse(created.tags) as string[],
 						uploaded_at: Number(created.uploaded_at),
+						replaced: !!existing,
 						media: {
 							mediainfo_episodes: [...media.episodeMediainfos.keys()],
 							screenshots: media.screenshots.length,
 						},
 					},
-					201,
+					existing ? 200 : 201,
 				);
 			},
 		);

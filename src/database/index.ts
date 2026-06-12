@@ -459,6 +459,45 @@ export class Database {
 		return rows[0] ?? null;
 	}
 
+	/** Find an existing release with the same identity (category + title + year + season). */
+	async findDuplicate(category: Category, title: string, year: number | null, season: string | null): Promise<Release | null> {
+		const yearFilter = year === null ? this.sql`year IS NULL` : this.sql`year = ${year}`;
+		const seasonFilter = season === null ? this.sql`season IS NULL` : this.sql`season = ${season}`;
+		const rows = (await this.sql`
+		SELECT * FROM releases
+		WHERE category = ${category} AND title = ${title} AND ${yearFilter} AND ${seasonFilter}
+		LIMIT 1
+	`) as unknown as Release[];
+		return rows[0] ?? null;
+	}
+
+	/** Overwrite an existing release in place (keeps the id, so comments stay attached). */
+	async replace(id: number, entry: Omit<Release, "id">): Promise<Release> {
+		await this.sql`
+		UPDATE releases SET
+			title = ${entry.title},
+			year = ${entry.year},
+			season = ${entry.season},
+			torrent_name = ${entry.torrent_name},
+			torrent_file = ${entry.torrent_file},
+			mediainfo = ${entry.mediainfo},
+			tags = ${entry.tags},
+			uploaded_at = ${entry.uploaded_at},
+			info_hash = ${entry.info_hash},
+			trackers = ${entry.trackers},
+			files = ${entry.files},
+			magnet = ${entry.magnet},
+			seeders = ${entry.seeders},
+			leechers = ${entry.leechers},
+			completed = ${entry.completed},
+			last_scraped_at = ${entry.last_scraped_at}
+		WHERE id = ${id}
+	`;
+		const found = await this.findById(entry.category, id);
+		if (!found) throw new Error("Replace failed: could not retrieve updated row");
+		return found;
+	}
+
 	async findGroupReleases(category: Category, title: string, year: number | null): Promise<Array<{ id: number; season: string | null }>> {
 		type Row = { id: number; season: string | null };
 		let rows: Row[];
