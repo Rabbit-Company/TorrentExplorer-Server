@@ -1,6 +1,7 @@
 import { mkdir, readFile, unlink, access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { Storage } from "./types.ts";
+import { readdir } from "node:fs/promises";
 
 export class LocalStorage implements Storage {
 	private basePath: string;
@@ -18,7 +19,7 @@ export class LocalStorage implements Storage {
 		return full;
 	}
 
-	async save(key: string, data: Uint8Array): Promise<void> {
+	async save(key: string, data: Uint8Array, _contentType?: string): Promise<void> {
 		const path = this.resolveKey(key);
 		await mkdir(dirname(path), { recursive: true });
 		await Bun.write(path, data);
@@ -41,5 +42,21 @@ export class LocalStorage implements Storage {
 
 	async delete(key: string): Promise<void> {
 		await unlink(this.resolveKey(key));
+	}
+
+	async list(prefix: string): Promise<string[]> {
+		try {
+			const entries = await readdir(this.basePath, { recursive: true, withFileTypes: true });
+			const keys: string[] = [];
+			for (const entry of entries) {
+				if (!entry.isFile()) continue;
+				const full = join(entry.parentPath ?? (entry as any).path, entry.name);
+				const key = relative(this.basePath, full).split(/[\\/]/).join("/");
+				if (key.startsWith(prefix)) keys.push(key);
+			}
+			return keys;
+		} catch {
+			return [];
+		}
 	}
 }

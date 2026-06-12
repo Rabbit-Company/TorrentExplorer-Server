@@ -20,6 +20,7 @@ import { registerCommentRoutes } from "./routes/comments.ts";
 import { Ntfy } from "./notifications/ntfy.ts";
 import { EncoderPoller } from "./encoders.ts";
 import { registerEncoderRoutes } from "./routes/encoders.ts";
+import { registerMediaRoutes } from "./routes/media.ts";
 
 /**
  * One-shot backfill: for any release whose info_hash or trackers are still
@@ -99,6 +100,7 @@ async function main() {
 
 	registerInfoRoutes(app, { db, config });
 	registerCategoryRoutes(app, { db, storage, config });
+	registerMediaRoutes(app, { db, storage });
 	registerTorrentRoutes(app, { db, storage });
 	registerRequestRoutes(app, { db, config, ntfy });
 	registerCommentRoutes(app, { db, config, ntfy });
@@ -116,6 +118,9 @@ async function main() {
 				"GET  /api/{anime|movies|series}/:id",
 				"POST /api/{anime|movies|series}  (multipart: torrent + mediainfo)",
 				"GET  /api/torrent/{anime|movies|series}/:id",
+				"GET  /api/media/{anime|movies|series}/:id",
+				"GET  /api/media/{anime|movies|series}/:id/mediainfo?ep=",
+				"GET  /api/media/{anime|movies|series}/:id/screenshot?file=",
 				"POST /api/requests  (json: { kind, id })",
 				"GET  /api/{anime|movies|series}/:id/comments",
 				"POST /api/{anime|movies|series}/:id/comments  (json: { body, parent_id? })",

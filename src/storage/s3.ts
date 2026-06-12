@@ -18,9 +18,9 @@ export class S3Storage implements Storage {
 		});
 	}
 
-	async save(key: string, data: Uint8Array): Promise<void> {
+	async save(key: string, data: Uint8Array, contentType = "application/x-bittorrent"): Promise<void> {
 		await this.client.write(key, data, {
-			type: "application/x-bittorrent",
+			type: contentType,
 		});
 	}
 
@@ -40,5 +40,27 @@ export class S3Storage implements Storage {
 
 	async delete(key: string): Promise<void> {
 		await this.client.delete(key);
+	}
+
+	async list(prefix: string): Promise<string[]> {
+		const keys: string[] = [];
+		let continuationToken: string | undefined;
+
+		for (let i = 0; i < 10; i++) {
+			const result = await this.client.list({
+				prefix,
+				maxKeys: 1000,
+				...(continuationToken ? { continuationToken } : {}),
+			});
+
+			for (const obj of result.contents ?? []) {
+				if (obj.key) keys.push(obj.key);
+			}
+
+			if (!result.isTruncated || !result.nextContinuationToken) break;
+			continuationToken = result.nextContinuationToken;
+		}
+
+		return keys;
 	}
 }

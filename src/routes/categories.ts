@@ -7,9 +7,9 @@ import { Logger } from "../logger.ts";
 import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import type { Config } from "../config.ts";
 import { cache } from "@rabbit-company/web-middleware/cache";
+import { collectEpisodeMedia, mediaPrefix, saveEpisodeMedia } from "./media.ts";
 
 const MAX_TORRENT_SIZE = 10 * 1024 * 1024; // 10 MB
-const MAX_MEDIAINFO_SIZE = 1 * 1024 * 1024; // 1 MB
 
 interface Services {
 	db: Database;
@@ -147,7 +147,6 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				}
 
 				const torrent = form.get("torrent");
-				const mediainfo = form.get("mediainfo");
 
 				if (!(torrent instanceof File)) {
 					return ctx.json({ error: "Missing field: torrent (file)" }, 400);
@@ -158,28 +157,6 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 				if (torrent.size > MAX_TORRENT_SIZE) {
 					return ctx.json({ error: `Torrent file exceeds ${MAX_TORRENT_SIZE} bytes` }, 413);
 				}
-
-				// mediainfo can come as a File or plain text field
-				let mediainfoText: string;
-				if (mediainfo instanceof File) {
-					if (mediainfo.size > MAX_MEDIAINFO_SIZE) {
-						return ctx.json({ error: "MediaInfo too large" }, 413);
-					}
-					mediainfoText = await mediainfo.text();
-				} else if (typeof mediainfo === "string") {
-					if (mediainfo.length > MAX_MEDIAINFO_SIZE) {
-						return ctx.json({ error: "MediaInfo too large" }, 413);
-					}
-					mediainfoText = mediainfo;
-				} else {
-					return ctx.json({ error: "Missing field: mediainfo" }, 400);
-				}
-
-				if (!mediainfoText.trim()) {
-					return ctx.json({ error: "MediaInfo is empty" }, 400);
-				}
-
-				mediainfoText = redactMediainfoPaths(mediainfoText);
 
 				// The user formats torrent files nicely -> preserve the exact filename.
 				const rawName = torrent.name;
@@ -211,13 +188,31 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 					Logger.warn(`Could not parse torrent metadata for ${displayName}: ${err.message ?? err}`);
 				}
 
+				// mediainfo (legacy text/single file OR one file per episode) + screenshots
+				const collected = await collectEpisodeMedia(form, files, redactMediainfoPaths);
+				if (!collected.ok) {
+					return ctx.json({ error: collected.error }, collected.status);
+				}
+				const media = collected.media;
+
 				const storageKey = `${category}/${sanitizeStorageKey(displayName)}.torrent`;
 
 				try {
-					await storage.save(storageKey, bytes);
+					await storage.save(storageKey, bytes, "application/x-bittorrent");
 				} catch (err: any) {
 					Logger.error("Storage save failed:", err);
 					return ctx.json({ error: "Failed to save torrent file" }, 500);
+				}
+
+				// Per-episode media. Keys are recorded as they are written so a failure
+				// rolls back everything that already landed in storage.
+				const mediaKeys: string[] = [];
+				try {
+					await saveEpisodeMedia(storage, mediaPrefix(storageKey), media, mediaKeys);
+				} catch (err: any) {
+					Logger.error("Media save failed:", err);
+					await Promise.allSettled([...mediaKeys, storageKey].map((k) => storage.delete(k)));
+					return ctx.json({ error: "Failed to save episode media" }, 500);
 				}
 
 				const now = Date.now();
@@ -230,7 +225,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						season: parsedName.season,
 						torrent_name: displayName,
 						torrent_file: storageKey,
-						mediainfo: mediainfoText,
+						mediainfo: media.dbMediainfo,
 						tags: JSON.stringify(parsedName.tags),
 						uploaded_at: now,
 						info_hash: infoHash,
@@ -243,8 +238,8 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						last_scraped_at: null,
 					});
 				} catch (err: any) {
-					// Roll back the stored file
-					await storage.delete(storageKey).catch(() => {});
+					// Roll back stored files
+					await Promise.allSettled([...mediaKeys, storageKey].map((k) => storage.delete(k)));
 					Logger.error("DB insert failed:", err);
 					return ctx.json({ error: "Failed to save release" }, 500);
 				}
@@ -259,6 +254,10 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						torrent_name: created.torrent_name,
 						tags: JSON.parse(created.tags) as string[],
 						uploaded_at: Number(created.uploaded_at),
+						media: {
+							mediainfo_episodes: [...media.episodeMediainfos.keys()],
+							screenshots: media.screenshots.length,
+						},
 					},
 					201,
 				);
