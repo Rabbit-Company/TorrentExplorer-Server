@@ -562,6 +562,30 @@ Authorization: Bearer <your_token>
 
 Read-only endpoints do not require authentication unless you add your own external access control.
 
+### `GET /`
+
+Returns the server name, release group, and a plain list of all available endpoints. Useful as a quick sanity check that the server is up and reachable.
+
+Example response:
+
+```json
+{
+	"name": "torrent-explorer-server",
+	"releaseGroup": "RabbitCompany",
+	"endpoints": ["GET  /api/info", "GET  /api/health", "..."]
+}
+```
+
+### `GET /api/health`
+
+Lightweight health check for monitoring and container orchestration.
+
+Example response:
+
+```json
+{ "status": "ok" }
+```
+
 ### `GET /api/info`
 
 Returns basic server branding and release counts by category.
@@ -586,7 +610,7 @@ Example response:
 
 ### `GET /api/{anime|movies|series}?page=1&limit=24&q=search`
 
-Lists releases for a category.
+Lists releases for a category, **grouped by title and year**. Each group contains every season of the same title, sorted numerically (S2 before S10). Groups are ordered by the most recent upload within the group.
 
 This endpoint returns summary rows only and does not include the full MediaInfo text.
 
@@ -594,39 +618,185 @@ Example response:
 
 ```json
 {
-	"items": [
+	"groups": [
 		{
-			"id": 1,
-			"category": "anime",
 			"title": "Tsugumomo",
 			"year": 2017,
-			"season": "S02",
-			"torrent_name": "[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1]",
+			"latest_uploaded_at": 1713571200000,
 			"tags": ["Bluray-1080p", "Opus 2.0", "AV1"],
-			"uploaded_at": 1713571200000
+			"releases": [
+				{
+					"id": 1,
+					"category": "anime",
+					"title": "Tsugumomo",
+					"year": 2017,
+					"season": "S01",
+					"torrent_name": "[RabbitCompany] Tsugumomo (2017) - S01 [Bluray-1080p][Opus 2.0][AV1]",
+					"tags": ["Bluray-1080p", "Opus 2.0", "AV1"],
+					"uploaded_at": 1710571200000,
+					"seeders": 12,
+					"leechers": 1,
+					"completed": 87,
+					"last_scraped_at": 1713570000000
+				},
+				{
+					"id": 2,
+					"category": "anime",
+					"title": "Tsugumomo",
+					"year": 2017,
+					"season": "S02",
+					"torrent_name": "[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1]",
+					"tags": ["Bluray-1080p", "Opus 2.0", "AV1"],
+					"uploaded_at": 1713571200000,
+					"seeders": 25,
+					"leechers": 3,
+					"completed": 140,
+					"last_scraped_at": 1713570000000
+				}
+			]
 		}
 	],
 	"pagination": { "page": 1, "limit": 24, "total": 42, "pages": 2 }
 }
 ```
 
+`tags` on the group is taken from the most recently uploaded release in that group.
+
 Query parameters:
 
-| Parameter | Type   | Required | Description                                      |
-| --------- | ------ | -------- | ------------------------------------------------ |
-| `page`    | number | no       | Page number (default: implementation-defined)    |
-| `limit`   | number | no       | Items per page (default: implementation-defined) |
-| `q`       | string | no       | Search query                                     |
+| Parameter | Type   | Required | Description                                                                                           |
+| --------- | ------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `page`    | number | no       | Page number (default `1`). Pagination counts **groups**, not individual releases.                     |
+| `limit`   | number | no       | Groups per page (default `24`, max `100`)                                                             |
+| `q`       | string | no       | Search query, matched against the title. A `(YYYY)` suffix in the query additionally filters by year. |
+
+Responses are cached for 30 seconds.
 
 ### `GET /api/{anime|movies|series}/:id`
 
-Returns the full release record for a single item, including the raw MediaInfo text.
+Returns the full release record for a single item, including the raw MediaInfo text, the magnet link, tracker scrape stats, the file list inside the torrent, and the other seasons of the same title.
 
 The frontend is expected to parse and render the MediaInfo content itself.
 
+Example response:
+
+```json
+{
+	"id": 2,
+	"category": "anime",
+	"title": "Tsugumomo",
+	"year": 2017,
+	"season": "S02",
+	"torrent_name": "[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1]",
+	"mediainfo": "General\nComplete name ...",
+	"tags": ["Bluray-1080p", "Opus 2.0", "AV1"],
+	"uploaded_at": 1713571200000,
+	"magnet": "magnet:?xt=urn:btih:...",
+	"seeders": 25,
+	"leechers": 3,
+	"completed": 140,
+	"last_scraped_at": 1713570000000,
+	"files": [{ "path": ["Tsugumomo S02", "Tsugumomo (2017) - S02E01.mkv"], "length": 412316860 }],
+	"group": [
+		{ "id": 1, "season": "S01" },
+		{ "id": 2, "season": "S02" }
+	]
+}
+```
+
+Field notes:
+
+- `magnet`, `seeders`, `leechers`, `completed`, and `last_scraped_at` are `null` until the background scraper has run for this release.
+- `files` is the file list parsed from the `.torrent`; it may be empty for releases whose torrent metadata could not be parsed.
+- `group` lists every release sharing the same title and year (all seasons), sorted numerically, including the current one. Use it to render season switchers.
+  Responses:
+
+- `200 OK` with the release record
+- `400 Bad Request` if the id is not a number
+- `404 Not Found` if no release with that id exists in the category
+
 ### `POST /api/{anime|movies|series}`
 
-Creates a new release by uploading a torrent file and its corresponding MediaInfo.
+Creates a new release by uploading a torrent file and its corresponding MediaInfo, optionally with per-episode MediaInfo files and screenshots.
+
+**Duplicate handling:** if a release with the same category, title, year, and season already exists, the upload **overwrites** it instead of creating a new entry. The existing release keeps its `id` (so comments and links stay attached), `uploaded_at` is refreshed, scrape stats are reset, and the previous torrent file and any per-episode media that were not re-uploaded are deleted from storage.
+
+#### Authorization
+
+This endpoint requires bearer token authentication.
+
+Include the token in the `Authorization` header:
+
+```http
+Authorization: Bearer <your_token>
+```
+
+#### Request format
+
+Send the request as `multipart/form-data`.
+
+| Field         | Type                 | Required | Notes                                                                                                                                                      |
+| ------------- | -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `torrent`     | file                 | yes      | A `.torrent` file (max 10 MB). The original filename is preserved.                                                                                         |
+| `mediainfo`   | text, file, or files | yes      | Either a single legacy MediaInfo text/file, **or** one file per episode named `<episode filename without extension>.txt` (max 1 MB each).                  |
+| `screenshots` | files                | no       | Per-episode screenshots named `<episode filename without extension>_<n>.<png\|jpg\|jpeg\|webp\|avif>` where `n` is 1–6. Max 10 MB each, max 6 per episode. |
+
+Per-episode `mediainfo` files and `screenshots` are validated against the file list inside the torrent. A file whose name does not match any episode in the torrent is rejected. Full filesystem paths in "Complete name" MediaInfo fields are redacted automatically, leaving only the filename.
+
+#### Filename format
+
+The uploaded torrent filename must follow one of these formats:
+
+- **Anime / Series**
+  `[ReleaseGroup] Title (Year) - S## [Tag1][Tag2]...`
+- **Movies**
+  `[ReleaseGroup] Title (Year) [Tag1][Tag2]...`
+  The API parses the following metadata from the filename:
+
+- release group
+- title
+- year
+- season (for anime/series)
+- tags
+  Example (batch upload with per-episode media):
+
+```bash
+curl -X POST http://localhost:3000/api/anime \
+  -H "Authorization: Bearer <your_token>" \
+  -F "torrent=@[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1].torrent" \
+  -F "mediainfo=@Tsugumomo (2017) - S02E01.txt" \
+  -F "mediainfo=@Tsugumomo (2017) - S02E02.txt" \
+  -F "screenshots=@Tsugumomo (2017) - S02E01_1.png" \
+  -F "screenshots=@Tsugumomo (2017) - S02E01_2.png"
+```
+
+Example response:
+
+```json
+{
+	"id": 2,
+	"category": "anime",
+	"title": "Tsugumomo",
+	"year": 2017,
+	"season": "S02",
+	"torrent_name": "[RabbitCompany] Tsugumomo (2017) - S02 [Bluray-1080p][Opus 2.0][AV1]",
+	"tags": ["Bluray-1080p", "Opus 2.0", "AV1"],
+	"uploaded_at": 1713571200000,
+	"replaced": false,
+	"media": {
+		"mediainfo_episodes": ["Tsugumomo (2017) - S02E01", "Tsugumomo (2017) - S02E02"],
+		"screenshots": 2
+	}
+}
+```
+
+Responses:
+
+- `201 Created` when a new release was created (`replaced: false`)
+- `200 OK` when an existing release with the same title, year, and season was overwritten (`replaced: true`)
+- `400 Bad Request` for unparseable filenames, missing fields, or media files that don't match the torrent contents
+- `401 Unauthorized` for a missing or invalid token
+- `413 Payload Too Large` when the torrent, a MediaInfo file, or a screenshot exceeds its size limit
 
 #### Authorization
 
@@ -683,6 +853,102 @@ Response:
 Streams the original `.torrent` file back to the client using its original filename.
 
 This is intended for direct browser download or opening in a torrent client.
+
+### `GET /api/media/{anime|movies|series}/:id`
+
+Returns a manifest of the per-episode media (MediaInfo and screenshots) available for a release. The manifest is derived from a storage listing; releases uploaded before per-episode media existed simply return an empty list.
+
+Episodes are listed in torrent order. `name` is the original episode filename without its extension, and is the value to pass as `ep` to the mediainfo endpoint below. Entries in `screenshots` are the stored filenames to pass as `file` to the screenshot endpoint.
+
+Example response:
+
+```json
+{
+	"episodes": [
+		{
+			"name": "Tsugumomo (2017) - S02E01",
+			"mediainfo": true,
+			"screenshots": ["Tsugumomo (2017) - S02E01_1.png", "Tsugumomo (2017) - S02E01_2.png"]
+		},
+		{
+			"name": "Tsugumomo (2017) - S02E02",
+			"mediainfo": true,
+			"screenshots": []
+		}
+	]
+}
+```
+
+Responses are cached for 30 seconds.
+
+### `GET /api/media/{anime|movies|series}/:id/mediainfo?ep=<episode name>`
+
+Returns the MediaInfo for a single episode as `text/plain`.
+
+| Parameter | Type   | Required | Description                                                         |
+| --------- | ------ | -------- | ------------------------------------------------------------------- |
+| `ep`      | string | yes      | The episode `name` exactly as returned by the media manifest above. |
+
+Responses:
+
+- `200 OK` with the MediaInfo text (served with long-lived immutable caching)
+- `400 Bad Request` if `ep` is missing or longer than 512 characters
+- `404 Not Found` if the release exists but has no MediaInfo for that episode
+
+### `GET /api/media/{anime|movies|series}/:id/screenshot?file=<stored filename>`
+
+Streams a single screenshot image.
+
+| Parameter | Type   | Required | Description                                                                                          |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `file`    | string | yes      | A filename exactly as returned in the manifest's `screenshots` array, e.g. `My Show - S01E03_2.png`. |
+
+Responses:
+
+- `200 OK` with the image (`image/png`, `image/jpeg`, `image/webp`, or `image/avif`, served with long-lived immutable caching)
+- `400 Bad Request` if `file` is missing or doesn't match the expected `<episode>_<n>.<ext>` pattern
+- `404 Not Found` if the screenshot doesn't exist
+
+### `POST /api/requests`
+
+Lets visitors request a title by submitting its TheTVDB ID. No authentication is required, but the endpoint is heavily rate limited per client IP (default: one request per hour — see `requests.rateLimitWindowMinutes`). When `requests.enabled` is `false` in the config, this route is not registered at all.
+
+#### Request body
+
+Send the request as `application/json`.
+
+| Field  | Type             | Required | Notes                                                                                                 |
+| ------ | ---------------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `kind` | string           | yes      | One of `anime`, `series`, or `movies` (`movie` is accepted as an alias for `movies`).                 |
+| `id`   | number or string | yes      | A positive TheTVDB ID, digits only. Anime and series use a **Series ID**; movies use a **Movies ID**. |
+
+Submitting the same `(kind, id)` pair again increments its counter and refreshes the timestamp instead of creating a new record.
+
+Example:
+
+```bash
+curl -X POST http://localhost:3000/api/requests \
+  -H "Content-Type: application/json" \
+  -d '{ "kind": "series", "id": 359274 }'
+```
+
+Example response:
+
+```json
+{
+	"id": 359274,
+	"kind": "series",
+	"counter": 3,
+	"created": 1713571200000,
+	"last_updated": 1713999999000
+}
+```
+
+Responses:
+
+- `201 Created` with the request record (`counter` is the total number of times this title has been requested)
+- `400 Bad Request` for an invalid `kind` or `id`
+- `429 Too Many Requests` if the per-IP rate limit is exceeded, with a `Retry-After` header
 
 ### `GET /api/{anime|movies|series}/:id/comments`
 
@@ -786,6 +1052,50 @@ Response:
 
 - `200 OK` with `{ "deleted": true }` on success.
 - `404 Not Found` if the comment doesn't exist on that release.
+
+### `GET /api/encoders/queue`
+
+Returns the public encoding queue, aggregated from the configured Rabbit Encoder instances. Jobs are grouped per title and season - no per-episode information is exposed. Returns `"enabled": false` with an empty `encoders` array when encoder polling is disabled in the config.
+
+If an encoder cannot be reached, its last known data is kept and it is flagged `"online": false`, so the public queue page degrades gracefully instead of going blank.
+
+Example response:
+
+```json
+{
+	"enabled": true,
+	"pollIntervalSeconds": 30,
+	"encoders": [
+		{
+			"name": "encoder-01",
+			"online": true,
+			"paused": false,
+			"lastUpdated": 1713571200000,
+			"totals": { "total": 24, "done": 10, "encoding": 1, "queued": 13, "error": 0 },
+			"etaMs": 7200000,
+			"groups": [
+				{
+					"title": "Tsugumomo",
+					"season": "Season 2",
+					"queuePosition": 1,
+					"total": 12,
+					"done": 10,
+					"encoding": 1,
+					"queued": 1,
+					"error": 0,
+					"progress": 87,
+					"etaMs": 1800000,
+					"active": true,
+					"completed": false,
+					"finishedAt": null
+				}
+			]
+		}
+	]
+}
+```
+
+Responses are cached for 5 seconds.
 
 ### Torznab / RSS endpoints
 
@@ -926,12 +1236,17 @@ services:
     environment:
       - TZ=UTC
       - PROXY=direct
-      - TOKEN=replace-with-a-long-random-token
+      - TOKEN=hux23to2isshfuyttzlyy6dfn2m9vtfdpew6iyjUbRqxKtXhgx
       - RELEASE_GROUP=RabbitCompany
       - XMR=8BmrgB8NGWhe8TSjNJDNMKgHrvxEQP1ZUDTWMNWA8CnKMpQjBjZhje1DPMmkbdNyMZESZDvHgMyufe5KPtLgy41Q8MTWnBE
+      - FRONTEND_URL=https://torrents.example.com
+      - NTFY_ENABLED=true
+      - NTFY_SERVER=https://ntfy.sh
+      - NTFY_TOPIC=torrent-explorer
     volumes:
       #- ./config.json:/app/config.json
       - torrent_explorer_torrents:/app/torrents
+      - torrent_explorer_media:/app/media
       - torrent_explorer_data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -944,6 +1259,8 @@ volumes:
   torrent_explorer_torrents:
     driver: local
   torrent_explorer_data:
+    driver: local
+  torrent_explorer_media:
     driver: local
 ```
 
