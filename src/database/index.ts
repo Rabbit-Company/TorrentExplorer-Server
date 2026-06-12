@@ -681,4 +681,9 @@ export class Database {
 	async deleteComment(id: number): Promise<void> {
 		await this.sql`DELETE FROM comments WHERE id = ${id} OR parent_id = ${id}`;
 	}
+
+	/** Deletes every comment (and reply) attached to a release. */
+	async deleteCommentsForRelease(releaseId: number): Promise<void> {
+		await this.sql`DELETE FROM comments WHERE release_id = ${releaseId}`;
+	}
 }

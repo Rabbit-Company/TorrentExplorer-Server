@@ -249,8 +249,14 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 					return ctx.json({ error: "Failed to save release" }, 500);
 				}
 
-				// Clean up files that belonged to the previous version of this release.
+				// Clean up files and comments that belonged to the previous version of this release.
 				if (existing) {
+					try {
+						await db.deleteCommentsForRelease(existing.id);
+					} catch (err: any) {
+						Logger.warn(`Could not delete old comments for release ${existing.id}: ${err.message ?? err}`);
+					}
+
 					const keep = new Set<string>([...mediaKeys, storageKey]);
 					const stale: string[] = [];
 					if (!keep.has(existing.torrent_file)) stale.push(existing.torrent_file);

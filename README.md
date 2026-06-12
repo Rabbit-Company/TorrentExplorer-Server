@@ -719,7 +719,7 @@ Field notes:
 
 Creates a new release by uploading a torrent file and its corresponding MediaInfo, optionally with per-episode MediaInfo files and screenshots.
 
-**Duplicate handling:** if a release with the same category, title, year, and season already exists, the upload **overwrites** it instead of creating a new entry. The existing release keeps its `id` (so comments and links stay attached), `uploaded_at` is refreshed, scrape stats are reset, and the previous torrent file and any per-episode media that were not re-uploaded are deleted from storage.
+**Duplicate handling:** if a release with the same category, title, year, and season already exists, the upload overwrites it instead of creating a new entry. The existing release keeps its `id` (so existing links stay valid), `uploaded_at` is refreshed, and scrape stats are reset. The previous torrent file, any per-episode media that were not re-uploaded, and all comments on the old release are deleted - comments usually report issues the re-upload fixes, so they would be misleading on the new version.
 
 #### Authorization
 
