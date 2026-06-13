@@ -52,6 +52,23 @@ function normStem(s: string): string {
 	return s.normalize("NFC").trim().toLowerCase();
 }
 
+/**
+ * Build the lookup from a torrent's file list: normalized episode stem ->
+ * original episode stem. Video files take precedence; if the torrent has none
+ * we fall back to every file. Shared by the mediainfo and screenshot collectors
+ * so a name validated for one is validated identically for the other.
+ */
+function buildStemLookup(torrentFiles: Array<{ path: string[]; length: number }>): {
+	stemLookup: Map<string, string>;
+	allStems: string[];
+} {
+	const stems = torrentFiles.filter((f) => VIDEO_EXT_RE.test(f.path[f.path.length - 1] ?? "")).map((f) => episodeStem(f.path));
+	const allStems = stems.length > 0 ? stems : torrentFiles.map((f) => episodeStem(f.path));
+	const stemLookup = new Map<string, string>(); // normalized -> original
+	for (const s of allStems) stemLookup.set(normStem(s), s);
+	return { stemLookup, allStems };
+}
+
 export interface CollectedMedia {
 	/** Goes into the existing `mediainfo` DB column (backwards compatible). */
 	dbMediainfo: string;
@@ -62,6 +79,82 @@ export interface CollectedMedia {
 }
 
 export type CollectResult = { ok: true; media: CollectedMedia } | { ok: false; status: 400 | 413; error: string };
+
+export type CollectScreenshotsResult = { ok: true; screenshots: CollectedMedia["screenshots"] } | { ok: false; status: 400 | 413; error: string };
+
+/**
+ * Validate the `screenshots` multipart entries against a torrent's episode
+ * stems. Pure validation - no bytes are read here (screenshots are only pulled
+ * into memory in saveScreenshots), so this is cheap to call.
+ *
+ * Naming: `<episode stem>_<n>.<png|jpg|jpeg|webp|avif>` where 1 <= n <= 6.
+ */
+function collectScreenshotEntries(
+	screenshotEntries: FormDataEntryValue[],
+	stemLookup: Map<string, string>,
+	torrentFiles: Array<{ path: string[]; length: number }>,
+): CollectScreenshotsResult {
+	const screenshots: CollectedMedia["screenshots"] = [];
+	const perEpisodeCount = new Map<string, number>();
+	const seen = new Set<string>();
+
+	for (const entry of screenshotEntries) {
+		if (!(entry instanceof File)) {
+			return { ok: false, status: 400, error: "screenshots must be uploaded as files" };
+		}
+		if (entry.size === 0) {
+			return { ok: false, status: 400, error: `Screenshot is empty: ${entry.name}` };
+		}
+		if (entry.size > MAX_SCREENSHOT_SIZE) {
+			return { ok: false, status: 413, error: `Screenshot exceeds ${MAX_SCREENSHOT_SIZE} bytes: ${entry.name}` };
+		}
+
+		const m = entry.name.match(/^(.+)_(\d{1,2})\.([a-z0-9]+)$/i);
+		if (!m) {
+			return { ok: false, status: 400, error: `Screenshot "${entry.name}" must be named "<episode stem>_<n>.<png|jpg|jpeg|webp|avif>"` };
+		}
+		const ext = m[3]!.toLowerCase();
+		if (!SCREENSHOT_EXTS.has(ext)) {
+			return { ok: false, status: 400, error: `Unsupported screenshot format: ${entry.name}` };
+		}
+		const n = parseInt(m[2]!, 10);
+		if (n < 1 || n > MAX_SCREENSHOTS_PER_EPISODE) {
+			return { ok: false, status: 400, error: `Screenshot index must be 1-${MAX_SCREENSHOTS_PER_EPISODE}: ${entry.name}` };
+		}
+		const stem = stemLookup.get(normStem(m[1]!));
+		if (!stem) {
+			return { ok: false, status: 400, error: `Screenshot "${entry.name}" does not match any file inside the torrent` };
+		}
+		const dedupe = `${normStem(stem)}_${n}`;
+		if (seen.has(dedupe)) {
+			return { ok: false, status: 400, error: `Duplicate screenshot index ${n} for episode: ${stem}` };
+		}
+		seen.add(dedupe);
+		const count = (perEpisodeCount.get(stem) ?? 0) + 1;
+		if (count > MAX_SCREENSHOTS_PER_EPISODE) {
+			return { ok: false, status: 400, error: `Too many screenshots for episode: ${stem}` };
+		}
+		perEpisodeCount.set(stem, count);
+
+		screenshots.push({ stem, n, ext, file: entry });
+	}
+
+	if (screenshots.length > 0 && torrentFiles.length === 0) {
+		return { ok: false, status: 400, error: "Screenshots require a parseable torrent file list" };
+	}
+
+	return { ok: true, screenshots };
+}
+
+/**
+ * Standalone screenshot collector for the append endpoint
+ * (POST /api/:category/:id/screenshots), where only `screenshots` are sent and
+ * the torrent file list comes from the already-stored release row.
+ */
+export function collectScreenshots(form: FormData, torrentFiles: Array<{ path: string[]; length: number }>): CollectScreenshotsResult {
+	const { stemLookup } = buildStemLookup(torrentFiles);
+	return collectScreenshotEntries(form.getAll("screenshots"), stemLookup, torrentFiles);
+}
 
 /**
  * Parses and validates the `mediainfo` and `screenshots` multipart fields.
@@ -91,10 +184,7 @@ export async function collectEpisodeMedia(
 	}
 
 	// Episode stems from the torrent, in torrent order (video files first-class).
-	const stems = torrentFiles.filter((f) => VIDEO_EXT_RE.test(f.path[f.path.length - 1] ?? "")).map((f) => episodeStem(f.path));
-	const allStems = stems.length > 0 ? stems : torrentFiles.map((f) => episodeStem(f.path));
-	const stemLookup = new Map<string, string>(); // normalized -> original
-	for (const s of allStems) stemLookup.set(normStem(s), s);
+	const { stemLookup, allStems } = buildStemLookup(torrentFiles);
 
 	const matchStem = (filename: string): string | undefined => {
 		// "<stem>.txt" or "<stem>.mkv.txt" both resolve to <stem>
@@ -169,56 +259,22 @@ export async function collectEpisodeMedia(
 	}
 
 	// Screenshots: `<episode stem>_<n>.<ext>`
-	const screenshots: CollectedMedia["screenshots"] = [];
-	const perEpisodeCount = new Map<string, number>();
-	const seen = new Set<string>();
+	const sc = collectScreenshotEntries(screenshotEntries, stemLookup, torrentFiles);
+	if (!sc.ok) return sc;
 
-	for (const entry of screenshotEntries) {
-		if (!(entry instanceof File)) {
-			return { ok: false, status: 400, error: "screenshots must be uploaded as files" };
-		}
-		if (entry.size === 0) {
-			return { ok: false, status: 400, error: `Screenshot is empty: ${entry.name}` };
-		}
-		if (entry.size > MAX_SCREENSHOT_SIZE) {
-			return { ok: false, status: 413, error: `Screenshot exceeds ${MAX_SCREENSHOT_SIZE} bytes: ${entry.name}` };
-		}
+	return { ok: true, media: { dbMediainfo, episodeMediainfos, screenshots: sc.screenshots } };
+}
 
-		const m = entry.name.match(/^(.+)_(\d{1,2})\.([a-z0-9]+)$/i);
-		if (!m) {
-			return { ok: false, status: 400, error: `Screenshot "${entry.name}" must be named "<episode stem>_<n>.<png|jpg|jpeg|webp|avif>"` };
-		}
-		const ext = m[3]!.toLowerCase();
-		if (!SCREENSHOT_EXTS.has(ext)) {
-			return { ok: false, status: 400, error: `Unsupported screenshot format: ${entry.name}` };
-		}
-		const n = parseInt(m[2]!, 10);
-		if (n < 1 || n > MAX_SCREENSHOTS_PER_EPISODE) {
-			return { ok: false, status: 400, error: `Screenshot index must be 1-${MAX_SCREENSHOTS_PER_EPISODE}: ${entry.name}` };
-		}
-		const stem = stemLookup.get(normStem(m[1]!));
-		if (!stem) {
-			return { ok: false, status: 400, error: `Screenshot "${entry.name}" does not match any file inside the torrent` };
-		}
-		const dedupe = `${normStem(stem)}_${n}`;
-		if (seen.has(dedupe)) {
-			return { ok: false, status: 400, error: `Duplicate screenshot index ${n} for episode: ${stem}` };
-		}
-		seen.add(dedupe);
-		const count = (perEpisodeCount.get(stem) ?? 0) + 1;
-		if (count > MAX_SCREENSHOTS_PER_EPISODE) {
-			return { ok: false, status: 400, error: `Too many screenshots for episode: ${stem}` };
-		}
-		perEpisodeCount.set(stem, count);
-
-		screenshots.push({ stem, n, ext, file: entry });
+/**
+ * Writes validated screenshots to storage, appending each written key to
+ * `savedKeys`. Throws on the first failed write.
+ */
+export async function saveScreenshots(storage: Storage, prefix: string, screenshots: CollectedMedia["screenshots"], savedKeys: string[]): Promise<void> {
+	for (const shot of screenshots) {
+		const key = `${prefix}screenshots/${sanitizeStorageKey(shot.stem)}_${shot.n}.${shot.ext}`;
+		await storage.save(key, new Uint8Array(await shot.file.arrayBuffer()), SCREENSHOT_MIME[shot.ext]);
+		savedKeys.push(key);
 	}
-
-	if (screenshots.length > 0 && torrentFiles.length === 0) {
-		return { ok: false, status: 400, error: "Screenshots require a parseable torrent file list" };
-	}
-
-	return { ok: true, media: { dbMediainfo, episodeMediainfos, screenshots } };
 }
 
 /**
@@ -235,11 +291,7 @@ export async function saveEpisodeMedia(storage: Storage, prefix: string, media: 
 		savedKeys.push(key);
 	}
 
-	for (const shot of media.screenshots) {
-		const key = `${prefix}screenshots/${sanitizeStorageKey(shot.stem)}_${shot.n}.${shot.ext}`;
-		await storage.save(key, new Uint8Array(await shot.file.arrayBuffer()), SCREENSHOT_MIME[shot.ext]);
-		savedKeys.push(key);
-	}
+	await saveScreenshots(storage, prefix, media.screenshots, savedKeys);
 }
 
 interface Services {
@@ -402,7 +454,7 @@ export function registerMediaRoutes(app: Web, services: Services): void {
 	}
 }
 
-function parseFiles(raw: string | null | undefined): Array<{ path: string[]; length: number }> {
+export function parseFiles(raw: string | null | undefined): Array<{ path: string[]; length: number }> {
 	if (!raw) return [];
 	try {
 		const parsed = JSON.parse(raw);

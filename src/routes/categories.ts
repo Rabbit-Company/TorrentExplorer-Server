@@ -7,7 +7,7 @@ import { Logger } from "../logger.ts";
 import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 import type { Config } from "../config.ts";
 import { cache } from "@rabbit-company/web-middleware/cache";
-import { collectEpisodeMedia, mediaPrefix, saveEpisodeMedia } from "./media.ts";
+import { collectEpisodeMedia, collectScreenshots, mediaPrefix, parseFiles, saveEpisodeMedia, saveScreenshots } from "./media.ts";
 
 const MAX_TORRENT_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -52,6 +52,14 @@ function redactMediainfoPaths(mediainfo: string): string {
 
 export function registerCategoryRoutes(app: Web, services: Services): void {
 	const { db, storage, config } = services;
+
+	// Shared owner-token check (constant-time-ish), reused by the upload routes.
+	const validateOwnerToken = (token: string): boolean => {
+		if (token.length !== config.server.token.length) {
+			return !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(token));
+		}
+		return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(config.server.token));
+	};
 
 	for (const category of ["anime", "movies", "series"] as Category[]) {
 		app.get(`/api/${category}`, cache({ ttl: 30, generateETags: false }), async (ctx) => {
@@ -131,11 +139,7 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 			`/api/${category}`,
 			bearerAuth({
 				validate(token, ctx) {
-					if (token.length !== config.server.token.length) {
-						return !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(token));
-					}
-
-					return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(config.server.token));
+					return validateOwnerToken(token);
 				},
 			}),
 			async (ctx) => {
@@ -188,7 +192,10 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 					Logger.warn(`Could not parse torrent metadata for ${displayName}: ${err.message ?? err}`);
 				}
 
-				// mediainfo (legacy text/single file OR one file per episode) + screenshots
+				// mediainfo (legacy text/single file OR one file per episode) + screenshots.
+				// Screenshots are optional here: with the create-then-append upload flow the
+				// client sends torrent + mediainfo only, then POSTs screenshots in
+				// size-bounded batches to /api/:category/:id/screenshots below.
 				const collected = await collectEpisodeMedia(form, files, redactMediainfoPaths);
 				if (!collected.ok) {
 					return ctx.json({ error: collected.error }, collected.status);
@@ -286,6 +293,79 @@ export function registerCategoryRoutes(app: Web, services: Services): void {
 						},
 					},
 					existing ? 200 : 201,
+				);
+			},
+		);
+
+		// Append screenshots to an existing release in size-bounded batches.
+		//
+		// This is the second half of the create-then-append upload: the torrent +
+		// mediainfo are sent to POST /api/:category once (returns the id), then the
+		// client posts screenshots here in batches. Validation reuses the stored torrent file list, so a
+		// screenshot is only accepted if its "<stem>_<n>.<ext>" name matches an
+		// episode in the torrent.
+		//
+		// Idempotent: keys are deterministic, so re-sending a batch just overwrites
+		// identical files. A partial batch is deliberately NOT rolled back - a retry
+		// rewrites the same keys and the media manifest is derived from a storage
+		// listing, so partial state is harmless and self-heals on retry.
+		app.post(
+			`/api/${category}/:id/screenshots`,
+			bearerAuth({
+				validate(token, ctx) {
+					return validateOwnerToken(token);
+				},
+			}),
+			async (ctx) => {
+				const id = parseInt(ctx.params.id!, 10);
+				if (!Number.isFinite(id)) {
+					return ctx.json({ error: "Invalid id" }, 400);
+				}
+
+				const release = await db.findById(category, id);
+				if (!release) {
+					return ctx.json({ error: "Not found" }, 404);
+				}
+
+				let form: FormData;
+				try {
+					form = await ctx.req.formData();
+				} catch {
+					return ctx.json({ error: "Expected multipart/form-data body" }, 400);
+				}
+
+				const files = parseFiles(release.files);
+				if (files.length === 0) {
+					return ctx.json({ error: "Release has no parseable torrent file list; cannot attach screenshots" }, 400);
+				}
+
+				const collected = collectScreenshots(form, files);
+				if (!collected.ok) {
+					return ctx.json({ error: collected.error }, collected.status);
+				}
+				if (collected.screenshots.length === 0) {
+					return ctx.json({ error: "No screenshots in request (expected one or more 'screenshots' file fields)" }, 400);
+				}
+
+				const prefix = mediaPrefix(release.torrent_file);
+				const savedKeys: string[] = [];
+				try {
+					await saveScreenshots(storage, prefix, collected.screenshots, savedKeys);
+				} catch (err: any) {
+					Logger.error("Screenshot append save failed:", err);
+					return ctx.json({ error: "Failed to save screenshots" }, 500);
+				}
+
+				const shotPrefix = `${prefix}screenshots/`;
+				return ctx.json(
+					{
+						id: release.id,
+						category: release.category,
+						added: savedKeys.length,
+						screenshots: savedKeys.map((k) => k.slice(shotPrefix.length)),
+					},
+					201,
+					{ "Cache-Control": "no-store" },
 				);
 			},
 		);

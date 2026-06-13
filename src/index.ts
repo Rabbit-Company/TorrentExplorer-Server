@@ -125,6 +125,7 @@ async function main() {
 				"GET  /api/{anime|movies|series}?page=&limit=&q=",
 				"GET  /api/{anime|movies|series}/:id",
 				"POST /api/{anime|movies|series}  (multipart: torrent + mediainfo)",
+				"POST /api/{anime|movies|series}/:id/screenshots  (multipart: screenshots[])",
 				"GET  /api/torrent/{anime|movies|series}/:id",
 				"GET  /api/media/{anime|movies|series}/:id",
 				"GET  /api/media/{anime|movies|series}/:id/mediainfo?ep=",
