@@ -950,6 +950,24 @@ Responses:
 - `400 Bad Request` for an invalid `kind` or `id`
 - `429 Too Many Requests` if the per-IP rate limit is exceeded, with a `Retry-After` header
 
+### `GET /api/requests`
+
+Lists every stored request, ordered by request count (most-requested first). Optional `?kind=anime|series|movies` filter. No authentication required.
+
+Example response:
+
+```json
+{
+	"requests": [{ "id": 359274, "kind": "anime", "counter": 5, "created": 1781721033792, "last_updated": 1781721033792 }]
+}
+```
+
+### `DELETE /api/requests/:kind/:id`
+
+Deletes a single request record. **Owner only** - requires a valid bearer token; any other request (including none) is rejected with `401`. Use it to clear requests for already-released titles or invalid IDs.
+
+Response: `200 OK` with `{ "deleted": true }`, or `404 Not Found` if no such request exists.
+
 ### `GET /api/{anime|movies|series}/:id/comments`
 
 Returns the comment thread for a release. Top-level comments are sorted oldest-first, each with its replies (also oldest-first) nested one level deep.
