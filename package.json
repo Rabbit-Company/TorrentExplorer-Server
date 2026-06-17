@@ -1,6 +1,6 @@
 {
 	"name": "torrent-explorer-server",
-	"version": "1.2.1",
+	"version": "1.3.0",
 	"description": "Torrent explorer backend API",
 	"type": "module",
 	"main": "src/index.ts",

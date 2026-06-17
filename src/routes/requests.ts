@@ -4,6 +4,7 @@ import type { Config } from "../config.ts";
 import { Algorithm, rateLimit } from "@rabbit-company/web-middleware/rate-limit";
 import { Logger } from "../logger.ts";
 import type { Ntfy } from "../notifications/ntfy.ts";
+import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 
 interface Services {
 	db: Database;
@@ -58,6 +59,13 @@ export function registerRequestRoutes(app: Web, services: Services): void {
 	const minutes = Math.max(1, Math.floor(config.requests.rateLimitWindowMinutes) || 60);
 	const windowMs = minutes * 60_000;
 	const message = `You can only submit one request per ${windowLabel(minutes)}. Please try again later.`;
+
+	const validateOwnerToken = (token: string): boolean => {
+		if (token.length !== config.server.token.length) {
+			return !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(token));
+		}
+		return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(config.server.token));
+	};
 
 	app.post(
 		"/api/requests",
@@ -123,6 +131,61 @@ export function registerRequestRoutes(app: Web, services: Services): void {
 			} catch (err: any) {
 				Logger.error("Failed to record request:", err);
 				return ctx.json({ error: "Failed to store request" }, 500);
+			}
+		},
+	);
+
+	app.get("/api/requests", async (ctx) => {
+		const kindParam = new URL(ctx.req.url).searchParams.get("kind");
+		let kind: Category | undefined;
+		if (kindParam && kindParam.trim()) {
+			const k = normaliseKind(kindParam);
+			if (!k) {
+				return ctx.json({ error: "Query 'kind' must be one of: anime, series, movies" }, 400, { "Cache-Control": "no-store" });
+			}
+			kind = k;
+		}
+
+		const records = await db.listRequests(kind);
+		return ctx.json(
+			{
+				requests: records.map((r) => ({
+					id: r.tvdb_id,
+					kind: r.kind,
+					counter: r.counter,
+					created: r.created,
+					last_updated: r.last_updated,
+				})),
+			},
+			200,
+			{ "Cache-Control": "public, max-age=30, s-maxage=30" },
+		);
+	});
+
+	app.delete(
+		"/api/requests/:kind/:id",
+		bearerAuth({
+			validate(token, ctx) {
+				return validateOwnerToken(token);
+			},
+		}),
+		async (ctx) => {
+			const kind = normaliseKind(ctx.params.kind);
+			if (!kind) {
+				return ctx.json({ error: "Field 'kind' must be one of: anime, series, movies" }, 400);
+			}
+			const tvdbId = parseTvdbId(ctx.params.id);
+			if (tvdbId === null) {
+				return ctx.json({ error: "Invalid TheTVDB ID" }, 400);
+			}
+
+			try {
+				const deleted = await db.deleteRequest(kind, tvdbId);
+				if (!deleted) return ctx.json({ error: "Request not found" }, 404);
+				return ctx.json({ deleted: true }, 200, { "Cache-Control": "no-store" });
+			} catch (err: any) {
+				Logger.error("Failed to delete request:", err);
+				return ctx.json({ error: "Failed to delete request" }, 500);
 			}
 		},
 	);

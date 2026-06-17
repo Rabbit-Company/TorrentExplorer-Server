@@ -639,6 +639,29 @@ export class Database {
 		return toMediaRequest(rows[0]!);
 	}
 
+	/** All requests, most-requested first. Optionally filtered by kind. */
+	async listRequests(kind?: Category): Promise<MediaRequest[]> {
+		const rows = (kind
+			? await this.sql`
+				SELECT * FROM requests
+				WHERE kind = ${kind}
+				ORDER BY counter DESC, last_updated DESC
+			`
+			: await this.sql`
+				SELECT * FROM requests
+				ORDER BY counter DESC, last_updated DESC
+			`) as unknown as MediaRequest[];
+		return rows.map(toMediaRequest);
+	}
+
+	/** Delete a single (kind, tvdb_id) request. Returns false if it didn't exist. */
+	async deleteRequest(kind: Category, tvdbId: number): Promise<boolean> {
+		const existing = await this.findRequest(kind, tvdbId);
+		if (!existing) return false;
+		await this.sql`DELETE FROM requests WHERE kind = ${kind} AND tvdb_id = ${tvdbId}`;
+		return true;
+	}
+
 	async listCommentsForRelease(releaseId: number): Promise<Comment[]> {
 		const rows = (await this.sql`
 			SELECT id, release_id, parent_id, author_type, body, created_at

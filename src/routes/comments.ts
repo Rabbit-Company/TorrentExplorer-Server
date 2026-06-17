@@ -22,7 +22,7 @@ type Identity = "anonymous" | "owner" | "invalid";
 function tokenValid(token: string, expected: string): boolean {
 	const a = Buffer.from(token);
 	const b = Buffer.from(expected);
-	if (a.length !== b.length) return false;
+	if (a.length !== b.length) return !timingSafeEqual(a, b);
 	return timingSafeEqual(a, b);
 }
 
